@@ -1,0 +1,13 @@
+if(CMAKE_TOOLCHAIN_FILE MATCHES ".*Emscripten\.cmake$" OR CMAKE_CXX_COMPILER MATCHES "/em\\+\\+(-[a-zA-Z0-9.])?$")
+        set(EMSCRIPTEN 1)
+        set(CMAKE_CXX_COMPILER_ID "Emscripten")
+        message(" * C++ compiler: Emscripten")
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -msimd128 -mrelaxed-simd")
+
+        set(CLANGD_FILE ${CMAKE_BINARY_DIR}/clangd)
+        execute_process(COMMAND ${CMAKE_C_COMPILER} --cflags OUTPUT_VARIABLE CLANGD_FLAGS_TO_ADD)
+        separate_arguments(CLANGD_FLAGS_TO_ADD UNIX_COMMAND "${CLANGD_FLAGS_TO_ADD}")
+        list(JOIN CLANGD_FLAGS_TO_ADD ", " CLANGD_FLAGS_TO_ADD)
+        set(CLANGD_TEMPLATE ${PROJECT_SOURCE_DIR}/cmake/clangd.in)
+        configure_file(${CLANGD_TEMPLATE} ${CLANGD_FILE})
+endif()

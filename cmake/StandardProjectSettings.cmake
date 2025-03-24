@@ -1,0 +1,47 @@
+if (NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+    message(STATUS "Setting build type to 'Release' as none was specified.")
+    set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING "Choose the type of build." FORCE)
+
+    set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS
+            "Debug" "Release" "MinSizeRel" "RelWithDebInfo")
+endif(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+
+find_program(CCACHE_PROGRAM ccache)
+if(CCACHE_PROGRAM)
+    message(STATUS "Using ccache")
+    set_property(GLOBAL PROPERTY RULE_LAUNCH_COMPILE "${CCACHE_PROGRAM}")
+else()
+    message(STATUS "ccache not found")
+endif()
+
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+option(ENABLE_IPO "Enable interprocedural optimization" OFF)
+
+if(ENABLE_IPO)
+    include(CheckIPOSupported)
+    check_ipo_supported(RESULT result OUTPUT output)
+    if(result)
+        message(STATUS "IPO / LTO enabled")
+        set(CMAKE_INTERPROCEDURAL_OPTIMIZATION TRUE)
+    else()
+        message(STATUS "IPO / LTO not supported: <${output}>")
+    endif()
+endif()
+
+if(NOT CMAKE_CROSSCOMPILING)
+    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+      include(CheckCXXCompilerFlag)
+      check_cxx_compiler_flag("-march=native" COMPILER_SUPPORTS_MARCH_NATIVE)
+      if(COMPILER_SUPPORTS_MARCH_NATIVE)
+        message(STATUS "Compiler supports -march=native; enabling it.")
+        add_compile_options("-march=native")
+      endif()
+    endif()
+
+    check_cxx_compiler_flag("/arch:AVX2" MSVC_SUPPORTS_AVX2)
+    if(MSVC_SUPPORTS_AVX2)
+      message(STATUS "MSVC supports /arch:AVX2, enabling it.")
+      add_compile_options("/arch:AVX2")
+    endif()
+endif()

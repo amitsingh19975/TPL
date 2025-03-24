@@ -1,0 +1,4 @@
+add_catch_test(allocator_test.cpp)
+add_catch_test(dyn_array_test.cpp)
+add_catch_test(queue_test.cpp)
+add_catch_test(signal_tree_test.cpp)
