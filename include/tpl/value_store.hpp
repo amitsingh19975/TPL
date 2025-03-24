@@ -37,9 +37,9 @@ namespace tpl {
         constexpr ValueStore(BlockAllocator* allocator) noexcept
             : m_allocator(allocator)
         {}
-        constexpr ValueStore(ValueStore const&) noexcept = default;
+        constexpr ValueStore(ValueStore const&) noexcept = delete;
         constexpr ValueStore(ValueStore &&) noexcept = default;
-        constexpr ValueStore& operator=(ValueStore const&) noexcept = default;
+        constexpr ValueStore& operator=(ValueStore const&) noexcept = delete;
         constexpr ValueStore& operator=(ValueStore &&) noexcept = default;
         constexpr ~ValueStore() noexcept = default;
 
