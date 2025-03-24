@@ -45,10 +45,15 @@ namespace tpl {
         constexpr ~ValueStore() noexcept = default;
 
         template <typename T>
-            requires (std::is_move_constructible_v<T>)
+            requires (std::is_move_constructible_v<T> || std::is_copy_constructible_v<T>)
         auto put(TaskId id, T&& value) {
             auto tmp = m_allocator->alloc<T>();
-            new(tmp) T(std::move(value));
+            if constexpr (std::is_move_constructible_v<T>) {
+                new(tmp) T(std::move(value));
+            } else {
+                new(tmp) T(value);
+            }
+
             std::lock_guard scope(m_mutex);
             if (auto it = m_values.find(id); it == m_values.end()) {
                 m_values[id] = Value {
@@ -73,6 +78,7 @@ namespace tpl {
         }
 
         template <typename T>
+            requires (std::is_copy_assignable_v<T> || std::is_move_constructible_v<T>)
         auto get(TaskId id) noexcept -> std::expected<T, ValueStoreError> {
             std::lock_guard scope(m_mutex);
             if (auto it = m_values.find(id); it != m_values.end()) {
@@ -82,9 +88,15 @@ namespace tpl {
                 }
                 m_values.erase(it);
                 auto ptr = reinterpret_cast<T*>(tmp.value);
-                auto val = std::move(*ptr);
-                m_allocator->dealloc(ptr);
-                return std::move(val);
+                if constexpr (std::is_move_assignable_v<T>) {
+                    auto val = std::move(*ptr);
+                    m_allocator->dealloc(ptr);
+                    return std::move(val);
+                } else if constexpr (std::is_copy_assignable_v<T>) {
+                    auto val = *ptr;
+                    m_allocator->dealloc(ptr);
+                    return val;
+                }
             } else {
                 return std::unexpected(ValueStoreError::not_found);
             }
