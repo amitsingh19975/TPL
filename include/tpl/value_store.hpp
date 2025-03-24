@@ -109,6 +109,16 @@ namespace tpl {
             m_allocator->reset(true);
         }
 
+        auto empty() const noexcept {
+            std::lock_guard scope(m_mutex);
+            return m_values.empty();
+        }
+
+        auto size() const noexcept {
+            std::lock_guard scope(m_mutex);
+            return m_values.size();
+        }
+
     private:
         struct Value {
             void (*type_id)() {internal::meta<void>};
