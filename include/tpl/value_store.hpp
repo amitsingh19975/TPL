@@ -3,6 +3,7 @@
 
 #include "allocator.hpp"
 #include <mutex>
+#include <type_traits>
 #include <unordered_map>
 #include <expected>
 
@@ -44,6 +45,7 @@ namespace tpl {
         constexpr ~ValueStore() noexcept = default;
 
         template <typename T>
+            requires (std::is_move_constructible_v<T>)
         auto put(TaskId id, T&& value) {
             auto tmp = m_allocator->alloc<T>();
             new(tmp) T(std::move(value));
@@ -100,6 +102,9 @@ namespace tpl {
 
         auto clear() noexcept {
             std::lock_guard scope(m_mutex);
+            for (auto [_, v]: m_values) {
+                v.destructor(v.value);
+            }
             m_values.clear();
             m_allocator->reset(true);
         }
