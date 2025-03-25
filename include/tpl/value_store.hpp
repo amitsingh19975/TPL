@@ -2,23 +2,22 @@
 #define AMT_TPL_VALUE_STORE_HPP
 
 #include "allocator.hpp"
-#include <mutex>
+#include <functional>
 #include <type_traits>
-#include <unordered_map>
 #include <expected>
+#include <utility>
+#include <atomic>
 
 namespace tpl {
 
     namespace internal {
         template <typename T>
-        struct meta_inner {
-            using type = T;
-
-            static void id() {};
+        struct ValueStoreDestructor {
+            static void destroy(void* ptr) noexcept {
+                auto& tmp = *reinterpret_cast<T*>(ptr);
+                tmp.~T();
+            }
         };
-
-        template <typename T>
-        static constexpr auto meta = meta_inner<T>::id;
     } // namespace internal
 
     enum class ValueStoreError {
@@ -33,8 +32,11 @@ namespace tpl {
         }
     }
 
-    template <typename TaskId>
+    // NOTE: This is not a thread-safe.
+    template <std::size_t N>
     struct ValueStore {
+        using task_id = std::size_t;
+
         constexpr ValueStore(BlockAllocator* allocator) noexcept
             : m_allocator(allocator)
         {}
@@ -46,7 +48,7 @@ namespace tpl {
 
         template <typename T>
             requires (std::is_move_constructible_v<T> || std::is_copy_constructible_v<T>)
-        auto put(TaskId id, T&& value) {
+        auto put(task_id id, T&& value) {
             auto tmp = m_allocator->alloc<T>();
             if constexpr (std::is_move_constructible_v<T>) {
                 new(tmp) T(std::move(value));
@@ -54,93 +56,97 @@ namespace tpl {
                 new(tmp) T(value);
             }
 
-            std::lock_guard scope(m_mutex);
-            if (auto it = m_values.find(id); it == m_values.end()) {
-                m_values[id] = Value {
-                    .type_id = internal::meta<T>,
-                    .value = tmp,
-                    .destructor = +[](void* val) -> void {
-                        reinterpret_cast<T*>(val)->~T();
-                    }
-                };
-            } else {
-                auto ptr = it->second.value;
-                it->second.destructor(ptr);
-                m_allocator->dealloc(ptr);
-                it->second = Value {
-                    .type_id = internal::meta<T>,
-                    .value = tmp,
-                    .destructor = +[](void* val) -> void {
-                        reinterpret_cast<T*>(val)->~T();
-                    }
-                };
+            remove(id);
+            std::exchange(m_values[id], Value {
+                .value = tmp,
+                .destroy = internal::ValueStoreDestructor<T>::destroy
+            });
+            m_size.fetch_add(1);
+        }
+
+        // std::expected does not allow references so we wrap it in reference wrapper
+        template <typename T>
+        auto get(task_id id) noexcept -> std::expected<std::reference_wrapper<T>, ValueStoreError> {
+            Value tmp = m_values[id];
+
+            if (!tmp.value) {
+                return std::unexpected(ValueStoreError::not_found);
             }
+
+            if (internal::ValueStoreDestructor<T>::destroy != tmp.destroy) {
+                return std::unexpected(ValueStoreError::type_mismatch);
+            }
+            auto ptr = reinterpret_cast<T*>(tmp.value);
+            return std::ref(*ptr);
         }
 
         template <typename T>
-            requires (std::is_copy_assignable_v<T> || std::is_move_constructible_v<T>)
-        auto get(TaskId id) noexcept -> std::expected<T, ValueStoreError> {
-            std::lock_guard scope(m_mutex);
-            if (auto it = m_values.find(id); it != m_values.end()) {
-                Value tmp = it->second;
-                if (internal::meta<T> != tmp.type_id) {
-                    return std::unexpected(ValueStoreError::type_mismatch);
-                }
-                m_values.erase(it);
-                auto ptr = reinterpret_cast<T*>(tmp.value);
-                if constexpr (std::is_move_assignable_v<T>) {
-                    auto val = std::move(*ptr);
-                    m_allocator->dealloc(ptr);
-                    return std::move(val);
-                } else if constexpr (std::is_copy_assignable_v<T>) {
-                    auto val = *ptr;
-                    m_allocator->dealloc(ptr);
-                    return val;
-                }
-            } else {
+        auto get(task_id id) const noexcept -> std::expected<std::reference_wrapper<T const&>, ValueStoreError> {
+            Value tmp = m_values[id];
+
+            if (!tmp.value) {
                 return std::unexpected(ValueStoreError::not_found);
             }
+
+            if (internal::ValueStoreDestructor<T>::destroy != tmp.destroy) {
+                return std::unexpected(ValueStoreError::type_mismatch);
+            }
+            auto ptr = reinterpret_cast<T*>(tmp.value);
+            return std::ref(*ptr);
         }
 
-        auto remove(TaskId id) noexcept {
-            std::lock_guard scope(m_mutex);
-            if (auto it = m_values.find(id); it != m_values.end()) {
-                Value tmp = it->second;
-                m_values.erase(it);
-                tmp.destructor(tmp.value);
-                m_allocator->dealloc(tmp.value);
+        template <typename T>
+            requires (std::is_move_constructible_v<T>)
+        auto consume(task_id id) noexcept -> std::expected<T, ValueStoreError> {
+            Value tmp = std::exchange(m_values[id], Value{});
+
+            if (!tmp.value) {
+                return std::unexpected(ValueStoreError::not_found);
             }
+
+            if (internal::ValueStoreDestructor<T>::destroy != tmp.destroy) {
+                return std::unexpected(ValueStoreError::type_mismatch);
+            }
+            auto ptr = reinterpret_cast<T*>(tmp.value);
+            auto val = std::move(*ptr);
+            m_allocator->dealloc(ptr);
+            m_size.fetch_sub(1);
+            return std::move(val);
         }
 
-        auto clear() noexcept {
-            std::lock_guard scope(m_mutex);
-            for (auto [_, v]: m_values) {
-                v.destructor(v.value);
+        auto remove(task_id id) noexcept {
+            Value v = std::exchange(m_values[id], Value{});
+            if (!v.value) return;
+            v.destroy(v.value);
+            m_size.fetch_sub(1);
+        }
+
+        auto clear() noexcept -> void {
+            for (auto& v: m_values) {
+                if (!v.value) continue;
+                v.destroy(std::exchange(v.value, nullptr));
             }
-            m_values.clear();
             m_allocator->reset(true);
+            m_size = 0;
         }
 
-        auto empty() const noexcept {
-            std::lock_guard scope(m_mutex);
-            return m_values.empty();
+        auto empty() const noexcept -> bool {
+            return m_size.load() == 0;
         }
 
-        auto size() const noexcept {
-            std::lock_guard scope(m_mutex);
-            return m_values.size();
+        auto size() const noexcept -> std::size_t {
+            return m_size.load();
         }
 
     private:
         struct Value {
-            void (*type_id)() {internal::meta<void>};
             void* value{nullptr};
-            void (*destructor)(void*);
+            void (*destroy)(void*);
         };
     private:
         BlockAllocator* m_allocator{nullptr};
-        std::unordered_map<TaskId, Value> m_values;
-        std::mutex m_mutex;
+        std::array<Value, N> m_values;
+        std::atomic<std::size_t> m_size{0};
     };
 
 } // namespace tpl
