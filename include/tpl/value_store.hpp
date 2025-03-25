@@ -2,8 +2,8 @@
 #define AMT_TPL_VALUE_STORE_HPP
 
 #include "allocator.hpp"
-#include "tpl/basic.hpp"
-#include "tpl/dyn_array.hpp"
+#include "basic.hpp"
+#include "dyn_array.hpp"
 #include <cstdint>
 #include <cstring>
 #include <functional>
@@ -11,7 +11,6 @@
 #include <expected>
 #include <utility>
 #include <atomic>
-#include <vector>
 
 namespace tpl {
 
@@ -57,17 +56,13 @@ namespace tpl {
 
         template <typename T>
             requires (std::is_move_constructible_v<T> || std::is_copy_constructible_v<T>)
-        auto put(task_id id, T&& value) {
-            void* tmp{nullptr};
-            if constexpr (sizeof(T) < sizeof(std::uintptr_t) && std::is_trivially_destructible_v<T>) {
-                tmp = reinterpret_cast<void*>(value);
+        auto put(task_id id, T&& value) -> void {
+            if (id >= m_values.size()) return;
+            auto tmp = m_allocator->alloc<T>();
+            if constexpr (std::is_move_constructible_v<T>) {
+                new(tmp) T(std::move(value));
             } else {
-                tmp = m_allocator->alloc<T>();
-                if constexpr (std::is_move_constructible_v<T>) {
-                    new(tmp) T(std::move(value));
-                } else {
-                    new(tmp) T(value);
-                }
+                new(tmp) T(value);
             }
 
             remove(id);
@@ -81,9 +76,10 @@ namespace tpl {
         // std::expected does not allow references so we wrap it in reference wrapper
         template <typename T>
         auto get(task_id id) noexcept -> std::expected<std::reference_wrapper<T>, ValueStoreError> {
+            if (id >= m_values.size()) return std::unexpected(ValueStoreError::not_found);
             Value tmp = m_values[id];
 
-            if (!tmp.value) {
+            if (!tmp.destroy) {
                 return std::unexpected(ValueStoreError::not_found);
             }
 
@@ -96,9 +92,10 @@ namespace tpl {
 
         template <typename T>
         auto get(task_id id) const noexcept -> std::expected<std::reference_wrapper<T const&>, ValueStoreError> {
+            if (id >= m_values.size()) return std::unexpected(ValueStoreError::not_found);
             Value tmp = m_values[id];
 
-            if (!tmp.value) {
+            if (!tmp.destroy) {
                 return std::unexpected(ValueStoreError::not_found);
             }
 
@@ -112,9 +109,10 @@ namespace tpl {
         template <typename T>
             requires (std::is_move_constructible_v<T>)
         auto consume(task_id id) noexcept -> std::expected<T, ValueStoreError> {
+            if (id >= m_values.size()) return std::unexpected(ValueStoreError::not_found);
             Value tmp = std::exchange(m_values[id], Value{});
 
-            if (!tmp.value) {
+            if (!tmp.destroy) {
                 return std::unexpected(ValueStoreError::not_found);
             }
 
@@ -122,19 +120,14 @@ namespace tpl {
                 return std::unexpected(ValueStoreError::type_mismatch);
             }
             m_size.fetch_sub(1);
-            if constexpr (sizeof(T) < sizeof(std::uintptr_t) && std::is_trivially_destructible_v<T>) {
-                auto t0 = reinterpret_cast<std::uintptr_t>(tmp.value);
-                auto t1 = static_cast<internal::storage_value<sizeof(T)>::type>(t0);
-                return std::bit_cast<T>(t1);
-            } else {
-                auto ptr = reinterpret_cast<T*>(tmp.value);
-                auto val = std::move(*ptr);
-                m_allocator->dealloc(ptr);
-                return std::move(val);
-            }
+            auto ptr = reinterpret_cast<T*>(tmp.value);
+            auto val = std::move(*ptr);
+            m_allocator->dealloc(ptr);
+            return std::move(val);
         }
 
         auto remove(task_id id) noexcept -> void {
+            if (id >= m_values.size()) return;
             Value v = std::exchange(m_values[id], Value{});
             if (!v.value) return;
             v.destroy(v.value);
@@ -144,10 +137,14 @@ namespace tpl {
         auto clear() noexcept -> void {
             for (auto& v: m_values) {
                 if (!v.value) continue;
-                v.destroy(std::exchange(v.value, nullptr));
+                v.destroy(v.value);
+                v.destroy = nullptr;
             }
+            auto size = m_values.size();
+            m_values.clear();
             m_allocator->reset(true);
-            m_size = 0;
+            m_size = 0; 
+            m_values.resize(size);
         }
 
         auto empty() const noexcept -> bool {
@@ -158,6 +155,14 @@ namespace tpl {
             return m_size.load();
         }
 
+        constexpr auto get_type(task_id id) const noexcept {
+            assert(id < m_values.size());
+            return m_values[id].destroy;
+        }
+
+        auto resize(std::size_t sz) {
+            m_values.resize(sz);
+        }
     private:
         struct Value {
             void* value{nullptr};
