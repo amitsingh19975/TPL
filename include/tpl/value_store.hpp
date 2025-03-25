@@ -2,11 +2,13 @@
 #define AMT_TPL_VALUE_STORE_HPP
 
 #include "allocator.hpp"
+#include "tpl/dyn_array.hpp"
 #include <functional>
 #include <type_traits>
 #include <expected>
 #include <utility>
 #include <atomic>
+#include <vector>
 
 namespace tpl {
 
@@ -33,18 +35,18 @@ namespace tpl {
     }
 
     // NOTE: This is not a thread-safe.
-    template <std::size_t N>
     struct ValueStore {
         using task_id = std::size_t;
 
-        constexpr ValueStore(BlockAllocator* allocator) noexcept
+        ValueStore(std::size_t Cap, BlockAllocator* allocator) noexcept
             : m_allocator(allocator)
+            , m_values(Cap, Value{}, allocator)
         {}
-        constexpr ValueStore(ValueStore const&) noexcept = delete;
-        constexpr ValueStore(ValueStore &&) noexcept = default;
-        constexpr ValueStore& operator=(ValueStore const&) noexcept = delete;
-        constexpr ValueStore& operator=(ValueStore &&) noexcept = default;
-        constexpr ~ValueStore() noexcept = default;
+        ValueStore(ValueStore const&) noexcept = delete;
+        ValueStore(ValueStore &&) noexcept = delete;
+        ValueStore& operator=(ValueStore const&) noexcept = delete;
+        ValueStore& operator=(ValueStore &&) noexcept = delete;
+        ~ValueStore() noexcept = default;
 
         template <typename T>
             requires (std::is_move_constructible_v<T> || std::is_copy_constructible_v<T>)
@@ -114,7 +116,7 @@ namespace tpl {
             return std::move(val);
         }
 
-        auto remove(task_id id) noexcept {
+        auto remove(task_id id) noexcept -> void {
             Value v = std::exchange(m_values[id], Value{});
             if (!v.value) return;
             v.destroy(v.value);
@@ -145,7 +147,7 @@ namespace tpl {
         };
     private:
         BlockAllocator* m_allocator{nullptr};
-        std::array<Value, N> m_values;
+        DynArray<Value> m_values;
         std::atomic<std::size_t> m_size{0};
     };
 
