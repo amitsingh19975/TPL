@@ -166,18 +166,18 @@ namespace tpl {
         }
 
         DynArray(size_type n, BlockAllocator* alloc = AllocatorManager::instance().get_alloc()) noexcept
-            : m_alloc(alloc)
-            , m_size(n)
+            : m_size(n)
             , m_capacity(n)
+            , m_alloc(alloc)
         {
             m_data = m_alloc->alloc<T>(m_size);
             new (m_data) T[m_size];
         }
 
         DynArray(size_type n, T def, BlockAllocator* alloc = AllocatorManager::instance().get_alloc()) noexcept(std::is_nothrow_copy_constructible_v<T>)
-            : m_alloc(alloc)
-            , m_size(n)
+            : m_size(n)
             , m_capacity(n)
+            , m_alloc(alloc)
         {
             m_data = m_alloc->alloc<T>(m_size);
             std::fill_n(m_data, m_size, def);
@@ -374,6 +374,13 @@ namespace tpl {
             swap(lhs.m_data, rhs.m_data);
             swap(lhs.m_size, rhs.m_size);
             swap(lhs.m_alloc, rhs.m_alloc);
+        }
+
+        auto clear() noexcept {
+            m_alloc->dealloc(m_data);
+            m_capacity = 0;
+            m_size = 0;
+            m_data = nullptr;
         }
     private:
         auto grow_if_need(size_type extra) noexcept {
