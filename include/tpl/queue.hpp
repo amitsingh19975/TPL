@@ -5,7 +5,8 @@
 #include <print>
 #include <utility>
 
-#include "tpl/allocator.hpp"
+#include "allocator.hpp"
+#include "basic.hpp"
 #include "atomic.hpp"
 #include <cstdint>
 #include <new>
@@ -15,21 +16,6 @@ namespace tpl {
 
     namespace internal {
         using atomic::internal::hardware_destructive_interference_size;
-
-        template <unsigned N>
-        struct storage_value;
-
-        template <>
-        struct storage_value<1> { using type = std::uint8_t; };
-
-        template <>
-        struct storage_value<2> { using type = std::uint16_t; };
-
-        template <>
-        struct storage_value<4> { using type = std::uint32_t; };
-
-        template <>
-        struct storage_value<8> { using type = std::uint64_t; };
 
         template <typename T, std::size_t N>
         struct StaticCircularArray {

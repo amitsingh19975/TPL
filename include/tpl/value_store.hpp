@@ -2,7 +2,10 @@
 #define AMT_TPL_VALUE_STORE_HPP
 
 #include "allocator.hpp"
+#include "tpl/basic.hpp"
 #include "tpl/dyn_array.hpp"
+#include <cstdint>
+#include <cstring>
 #include <functional>
 #include <type_traits>
 #include <expected>
@@ -16,8 +19,12 @@ namespace tpl {
         template <typename T>
         struct ValueStoreDestructor {
             static void destroy(void* ptr) noexcept {
-                auto& tmp = *reinterpret_cast<T*>(ptr);
-                tmp.~T();
+                if constexpr (
+                    !std::is_trivially_destructible_v<T>
+                ) {
+                    auto& tmp = *reinterpret_cast<T*>(ptr);
+                    tmp.~T();
+                }
             }
         };
     } // namespace internal
@@ -51,11 +58,16 @@ namespace tpl {
         template <typename T>
             requires (std::is_move_constructible_v<T> || std::is_copy_constructible_v<T>)
         auto put(task_id id, T&& value) {
-            auto tmp = m_allocator->alloc<T>();
-            if constexpr (std::is_move_constructible_v<T>) {
-                new(tmp) T(std::move(value));
+            void* tmp{nullptr};
+            if constexpr (sizeof(T) < sizeof(std::uintptr_t) && std::is_trivially_destructible_v<T>) {
+                tmp = reinterpret_cast<void*>(value);
             } else {
-                new(tmp) T(value);
+                tmp = m_allocator->alloc<T>();
+                if constexpr (std::is_move_constructible_v<T>) {
+                    new(tmp) T(std::move(value));
+                } else {
+                    new(tmp) T(value);
+                }
             }
 
             remove(id);
@@ -109,11 +121,17 @@ namespace tpl {
             if (internal::ValueStoreDestructor<T>::destroy != tmp.destroy) {
                 return std::unexpected(ValueStoreError::type_mismatch);
             }
-            auto ptr = reinterpret_cast<T*>(tmp.value);
-            auto val = std::move(*ptr);
-            m_allocator->dealloc(ptr);
             m_size.fetch_sub(1);
-            return std::move(val);
+            if constexpr (sizeof(T) < sizeof(std::uintptr_t) && std::is_trivially_destructible_v<T>) {
+                auto t0 = reinterpret_cast<std::uintptr_t>(tmp.value);
+                auto t1 = static_cast<internal::storage_value<sizeof(T)>::type>(t0);
+                return std::bit_cast<T>(t1);
+            } else {
+                auto ptr = reinterpret_cast<T*>(tmp.value);
+                auto val = std::move(*ptr);
+                m_allocator->dealloc(ptr);
+                return std::move(val);
+            }
         }
 
         auto remove(task_id id) noexcept -> void {
