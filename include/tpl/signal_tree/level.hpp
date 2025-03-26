@@ -62,7 +62,6 @@ namespace tpl::internal {
             if constexpr (L == levels) return;
             else {
                 auto const node = get_nodes<L>();
-                std::print("(Block: {}, Nodes: {}): ", (extents[L] + NodeIntTraits::max_nodes - 1) / NodeIntTraits::max_nodes, extents[L] / (levels - L));
                 node.debug_print(bin);
                 debug_print<L + 1>(bin);
             }
