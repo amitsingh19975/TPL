@@ -2,9 +2,6 @@
 #define AMT_TPL_VALUE_STORE_HPP
 
 #include "allocator.hpp"
-#include "basic.hpp"
-#include "dyn_array.hpp"
-#include <cstdint>
 #include <cstring>
 #include <functional>
 #include <type_traits>
@@ -46,7 +43,7 @@ namespace tpl {
 
         ValueStore(std::size_t Cap, BlockAllocator* allocator) noexcept
             : m_allocator(allocator)
-            , m_values(Cap, Value{}, allocator)
+            , m_values(Cap)
         {}
         ValueStore(ValueStore const&) noexcept = delete;
         ValueStore(ValueStore &&) noexcept = delete;
@@ -140,11 +137,8 @@ namespace tpl {
                 v.destroy(v.value);
                 v.destroy = nullptr;
             }
-            auto size = m_values.size();
-            m_values.clear();
             m_allocator->reset(true);
             m_size = 0; 
-            m_values.resize(size);
         }
 
         auto empty() const noexcept -> bool {
@@ -170,7 +164,7 @@ namespace tpl {
         };
     private:
         BlockAllocator* m_allocator{nullptr};
-        DynArray<Value> m_values;
+        std::vector<Value> m_values;
         std::atomic<std::size_t> m_size{0};
     };
 
