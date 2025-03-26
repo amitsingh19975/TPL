@@ -232,18 +232,25 @@ namespace tpl {
     };
 
     inline auto TaskToken::schedule() noexcept -> void {
+        auto& info = m_parent.m_info[m_id];
+        if (info.state != Schedular::TaskState::dead) return;
         m_parent.set_signal(m_id);
         m_result = TaskResult::rescheduled;
+        m_parent.m_info[m_id].state.store(Schedular::TaskState::alive);
     }
 
     inline auto TaskToken::stop() noexcept -> void {
         m_store.remove(m_id);
+
+        auto& info = m_parent.m_info[m_id];
+        if (info.state != Schedular::TaskState::alive) return;
         m_result = TaskResult::failed;
+        m_parent.m_info[m_id].state.store(Schedular::TaskState::dead);
     }
 
     inline auto TaskToken::destroy() noexcept -> void {
         m_store.remove(m_id);
-        m_parent.m_info[m_id].state.store(Schedular::TaskState::dead);
+        m_parent.m_info[m_id].state.store(Schedular::TaskState::empty);
         m_result = TaskResult::failed;
     }
 
@@ -256,6 +263,7 @@ namespace tpl {
                 return std::unexpected(SchedularError::cycle_found);
             }
 
+            if (parent->m_info.size() <= child) continue;
             auto& tmp = parent->m_info[child];
             if (tmp.state != TaskState::alive) continue;
             auto& ds = tmp.dep_signals;
