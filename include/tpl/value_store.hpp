@@ -138,7 +138,7 @@ namespace tpl {
                 v.destroy = nullptr;
             }
             m_allocator->reset(true);
-            m_size = 0; 
+            m_size = 0;
         }
 
         auto empty() const noexcept -> bool {
