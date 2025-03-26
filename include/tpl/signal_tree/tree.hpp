@@ -33,7 +33,16 @@ namespace tpl {
             return m_levels.select();
         }
 
+        TPL_ATOMIC_FUNC_ATTR auto get_empty_pos() noexcept -> std::optional<std::size_t> {
+            return m_levels.get_empty_pos();
+        }
+
         void debug_print(bool bin = false) const {
+            std::println("Levels: {}", m_levels.levels);
+            std::println("Extents: {}", m_levels.extents);
+            std::println("Strides: {}", m_levels.strides);
+            std::println("Total Bits: {}", m_levels.total_bits);
+            std::println("size: {}", m_levels.size);
             m_levels.debug_print(bin);
         }
 
@@ -44,6 +53,10 @@ namespace tpl {
         template <std::size_t L>
         constexpr auto get_level() const noexcept {
             return m_levels.template get_nodes<L>();
+        }
+
+        constexpr auto clear() noexcept -> void {
+            m_levels.clear();
         }
     private:
         base_type m_levels;

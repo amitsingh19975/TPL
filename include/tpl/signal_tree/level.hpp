@@ -36,7 +36,6 @@ namespace tpl::internal {
     struct LevelContainer {
         using type = NodeIntTraits::type;
 
-    private:
         static constexpr auto levels = static_cast<std::size_t>(std::countr_zero(Cap) + 1);
         static constexpr auto extents = [](){
             std::array<std::size_t, levels> res{};
@@ -63,8 +62,9 @@ namespace tpl::internal {
             if constexpr (L == levels) return;
             else {
                 auto const node = get_nodes<L>();
+                std::print("(Block: {}, Nodes: {}): ", (extents[L] + NodeIntTraits::max_nodes - 1) / NodeIntTraits::max_nodes, extents[L] / (levels - L));
                 node.debug_print(bin);
-                debug_print<L + 1>();
+                debug_print<L + 1>(bin);
             }
         }
 
@@ -100,9 +100,8 @@ namespace tpl::internal {
         constexpr auto get_nodes()
             noexcept -> Node<
                 /*BitsPerNode=*/ levels - L,
-                /*Blocks=*/ (extents[L] + NodeIntTraits::max_nodes - 1) / NodeIntTraits::max_nodes,
-                /*TotalNodes=*/ extents[L] / (levels - L),
-                /*Offset=*/ (strides[L] % NodeIntTraits::max_nodes)
+                /*Extent*/ extents[L],
+                /*Stride*/ strides[L]
             >
         {
             return { m_data.data() + strides[L] / NodeIntTraits::max_nodes };
@@ -112,6 +111,21 @@ namespace tpl::internal {
         constexpr auto get_nodes() const noexcept {
             auto* self = const_cast<LevelContainer<Cap>*>(this);
             return self->template get_nodes<L>();
+        }
+
+        TPL_ATOMIC_FUNC_ATTR auto get_empty_pos() noexcept -> std::optional<std::size_t> {
+            auto nodes = get_nodes<levels - 1>();
+            static constexpr auto nnodes = extents[levels - 1];
+            for (auto i = 0ul; i < nnodes; ++i) {
+                if (nodes.get_value({i}) == 0) return i;
+            }
+            return {};
+        }
+
+        constexpr auto clear() noexcept -> void {
+            for (auto i = 0ul; i < m_data.size(); ++i) {
+                m_data[i].data = 0;
+            }
         }
 
     private:
