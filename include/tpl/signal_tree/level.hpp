@@ -104,7 +104,7 @@ namespace tpl::internal {
                 /*Stride*/ strides[L]
             >
         {
-            return { m_data.data() + strides[L] / NodeIntTraits::max_nodes };
+            return { m_data.data() };
         }
 
         template <std::size_t L>

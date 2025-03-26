@@ -22,9 +22,7 @@ namespace tpl::internal {
         // This is a upper limit that is not applicable for nodes that are less than max nodes
         static constexpr auto nodes_per_block = NodeIntTraits::max_nodes / BitsPerNode;
         NodeAlignedWrapper* ptr;
-        static constexpr auto offset = Stride % NodeIntTraits::max_nodes; 
         static constexpr auto total_nodes = Extent / BitsPerNode;
-        static constexpr auto blocks = (Extent + offset + NodeIntTraits::max_nodes - 1) / NodeIntTraits::max_nodes;
 
         // [3, 2, 1] [6, 5, 4]....
         TPL_ATOMIC_FUNC_ATTR auto get_value(SignalIndex index) const noexcept -> std::size_t {
@@ -35,7 +33,7 @@ namespace tpl::internal {
         }
 
         TPL_ATOMIC_FUNC_ATTR auto get_data(SignalIndex index) const noexcept -> type {
-            auto block_index = (index.index * BitsPerNode + offset) / nodes_per_block;
+            auto [block_index, _] = parse_index(index);
             auto const* block = reinterpret_cast<atomic::Atomic const*>(ptr + block_index);
             return std::bit_cast<type>(block->load(std::memory_order_acquire));
         }
@@ -78,19 +76,13 @@ namespace tpl::internal {
         }
 
         TPL_ATOMIC_FUNC_ATTR auto dec_helper(SignalIndex index, type data) const noexcept -> type {
-            auto block_index = (index.index * BitsPerNode + offset) / nodes_per_block;
-            auto idx = index.index - (block_index * nodes_per_block);
-            idx *= BitsPerNode;
-            if (block_index == 0) idx += offset;
+            auto [block_index, idx] = parse_index(index);
             auto inc = type(1) << idx;
             return data - inc;
         }
 
         TPL_ATOMIC_FUNC_ATTR auto get_value_helper(SignalIndex index, type data) const noexcept -> type {
-            auto block_index = (index.index * BitsPerNode + offset) / nodes_per_block;
-            auto idx = index.index - (block_index * nodes_per_block);
-            idx *= BitsPerNode;
-            if (block_index == 0) idx += offset;
+            auto [block_index, idx] = parse_index(index);
             return static_cast<std::size_t>((data >> idx) & mask);
         }
 
@@ -107,49 +99,26 @@ namespace tpl::internal {
         }
 
         void debug_print(bool bin = false) const {
-            std::print("{{");
+            std::print("<");
 
-            auto helper = [](
-                type data,
-                std::size_t offset,
-                std::size_t sz,
-                bool bin,
-                bool comma
-            ) {
-                std::print("<");
-                for (auto j = 0ul; j < sz; ++j) {
-                    auto num = (data >> (j * BitsPerNode + offset)) & mask;
-                    if (bin) {
-                        std::print("[{:0{}b}]", num, BitsPerNode);
-                    } else {
-                        std::print("[{}]", num);
-                    }
+            for (auto i = 0ul; i < total_nodes; ++i) {
+                auto [b, idx] = parse_index({i});
+                auto num = (ptr[b].data >> idx) & mask;
+                if (bin) {
+                    std::print("[{:0{}b}]", num, BitsPerNode);
+                } else {
+                    std::print("[{}]", num);
                 }
-                std::print(">");
-                if (comma) std::print(", ");
-            };
-
-            auto current_offset = offset;
-            auto size = (NodeIntTraits::max_nodes - offset) / BitsPerNode;
-            for (auto i = 0ul; i < blocks; ++i) {
-                helper(
-                    ptr[i].data,
-                    current_offset,
-                    std::min(size, total_nodes),
-                    bin,
-                    i + 1 != blocks
-                );
-                current_offset = 0;
-                size = (i + 1) * nodes_per_block;
             }
 
-            std::println("}}");
+            std::println(">");
         }
 
         constexpr auto parse_index(SignalIndex index) const noexcept -> std::pair<std::size_t, std::size_t> {
-            auto abs_index = index.index * BitsPerNode + offset;
+            auto abs_index = index.index * BitsPerNode + Stride;
             auto block_index = abs_index / NodeIntTraits::max_nodes;
-            return { block_index, abs_index % NodeIntTraits::max_nodes };
+            auto idx = abs_index % NodeIntTraits::max_nodes;
+            return { block_index, idx };
         }
     };
 } // namespace tpl::internal
