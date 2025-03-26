@@ -1,21 +1,45 @@
 #ifndef AMT_TPL_TASK_HPP
 #define AMT_TPL_TASK_HPP
 
+#include <concepts>
 #include <functional>
 #include "thread.hpp"
+#include "task_token.hpp"
 
 namespace tpl {
 
     struct Task {
         using priority_t = ThisThread::Priority;
-        #if defined(__cpp_lib_move_only_function)
-        using fn_t = std::move_only_function<void()>;
-        #else
-        using fn_t = std::function<void()>;
-        #endif
+        using fn_t = std::function<void(TaskToken&)>;
 
-        priority_t priority{ priority_t::normal };
-        
+        template <typename Fn>
+        Task(Fn&& fn, priority_t p = priority_t::normal) noexcept
+            : m_priority(p)
+        {
+            m_fn = [fn = std::forward<Fn>(fn)](TaskToken& t) {
+                if constexpr (std::invocable<Fn, TaskToken&>) {
+                    std::invoke(fn, t);
+                } else {
+                    std::invoke(fn);
+                }
+            };
+        }
+
+        Task() noexcept = default;
+        Task(Task const&) noexcept = delete;
+        Task(Task &&) noexcept = default;
+        Task& operator=(Task const&) noexcept = delete;
+        Task& operator=(Task &&) noexcept = default;
+        ~Task() noexcept = default;
+
+        auto operator()(TaskToken& token) const noexcept {
+            [[maybe_unused]] auto is_priority_set = ThisThread::set_priority(m_priority);
+            assert(is_priority_set == true);
+            m_fn(token);
+        }
+    private:
+        fn_t m_fn;
+        priority_t m_priority{ priority_t::normal };
     };
 
 } // namespace tpl
