@@ -130,7 +130,7 @@ namespace tpl {
         constexpr auto add_task(
             Fn&& fn,
             Task::priority_t p = Task::priority_t::normal
-        ) noexcept -> DependencyTracker {
+        ) -> DependencyTracker {
             for (auto i = m_trees.size(); i > 0; --i) {
                 auto idx = i - 1;
                 auto& block = m_trees[idx];
@@ -138,7 +138,7 @@ namespace tpl {
                 if (!pos) continue;
                 block.set(*pos);
                 auto index = idx * capacity + *pos;
-                if (m_info.size() <= index) m_info.resize(m_trees.size() * capacity + 1);
+                if (m_info.size() <= index) resize_info(m_trees.size() * capacity + 1);
                 m_info[index] = TaskInfo(
                     Task(std::forward<Fn>(fn), p)
                 );
@@ -148,7 +148,7 @@ namespace tpl {
             block.set(0);
             m_trees.emplace_back(std::move(block));
             auto index = m_trees.size() - 1;
-            if (m_info.size() <= index) m_info.resize(m_trees.size() * capacity + 1);
+            if (m_info.size() <= index) resize_info(m_trees.size() * capacity + 1);
             m_info[index] = TaskInfo(
                 Task(std::forward<Fn>(fn), p)
             );
@@ -218,6 +218,11 @@ namespace tpl {
                 if (detect_cycle(next_id, tracker)) return true;
             }
             return false;
+        }
+
+        void resize_info(std::size_t size) {
+            m_info.resize(size);
+            m_store.resize(size);
         }
     private:
         std::unique_ptr<BlockAllocator> m_alloc;
