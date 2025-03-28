@@ -193,7 +193,7 @@ namespace tpl {
                 if (info.state != TaskState::alive) continue;
                 for (auto j = 0ul; j < info.inputs.size(); ++j) {
                     auto& in = info.inputs[j];
-                    in.second = (freq[tid_to_int(in.first)] > 0);
+                    in.second = (freq[tid_to_int(in.first)] == 0);
                 }
             }
 
