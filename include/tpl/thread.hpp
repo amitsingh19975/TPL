@@ -644,7 +644,9 @@ namespace tpl {
     inline ThisThread::tid_t ThisThread::s_main_thread_id = get_native_id();
     #endif
 
-    inline static std::size_t hardware_max_parallism = std::max(hardware_cpu_info.active_cpus, hardware_cpu_info.active_cpus / hardware_cpu_info.logical_cpus / hardware_cpu_info.physical_cpus);
+    inline static std::size_t hardware_max_parallism() noexcept {
+        return std::max(hardware_cpu_info.active_cpus, hardware_cpu_info.active_cpus / hardware_cpu_info.logical_cpus / hardware_cpu_info.physical_cpus);
+    }
 } // namespace tpl
 
 #if defined(TPL_USE_BSD_API)
