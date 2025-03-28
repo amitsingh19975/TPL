@@ -32,7 +32,7 @@ int main() {
     [[maybe_unused]] auto t0 = s.add_task([](TaskToken& token) {
         auto value = token.arg<int>(TaskId(1)).value_or(-1);
         std::println("Hello from task 0: Called after => {}", value);
-        token.destroy();
+        token.stop();
     });
     auto i = 0ul;
     [[maybe_unused]] auto t1 = s.add_task([&i](TaskToken& token) {
