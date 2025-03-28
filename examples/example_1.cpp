@@ -33,19 +33,19 @@ int main() {
         auto value = token.arg<int>(TaskId(1)).value_or(-1);
         std::println("Hello from task 0: Called after => {}", value);
         token.destroy();
-        token.return_(0);
     });
     auto i = 0ul;
     [[maybe_unused]] auto t1 = s.add_task([&i](TaskToken& token) {
         std::println("[{}]: Hello from task 1", i);
         if (i ++ < 5) {
             token.schedule();
-        } 
+        }
+        return 1;
     });
     [[maybe_unused]] auto t2 = s.add_task([](TaskToken& token) {
         auto value = token.arg<int>(TaskId(0)).value_or(-1);
         std::println("Hello from task 2: Called after => {}", value);
-        token.return_(2);
+        return 2;
     });
     {
         auto e0 = t0.deps_on(t1);
