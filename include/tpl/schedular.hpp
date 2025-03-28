@@ -113,7 +113,7 @@ namespace tpl {
             return { tid_to_int(id) / capacity, tid_to_int(id) % capacity };
         }
 
-        auto on_complete(TaskId id, bool should_set_state = false, bool is_reschedule = false) {
+        auto on_complete(TaskId id, bool should_set_state = false) {
             auto helper = [=, this] {
                 auto& info = m_info[tid_to_int(id)];
                 if (info.state != TaskState::alive) return;
@@ -142,20 +142,18 @@ namespace tpl {
             };
             helper();
 
-            if (!is_reschedule) {
-                complete_one_task();
-            }
+            complete_one_task();
             m_pool.waiter.notify_all();
         }
 
         auto on_failure(TaskId id) {
             (void)id;
             complete_one_task();
-            // Handle anything on failure
         }
 
         auto on_reschedule(TaskId id) {
-            on_complete(id, false, true);
+            (void)id;
+            m_pool.waiter.notify_one();
         }
 
         struct DependencyTracker {
