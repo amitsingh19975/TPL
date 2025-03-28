@@ -2,6 +2,7 @@
 #define AMT_TPL_VALUE_STORE_HPP
 
 #include "allocator.hpp"
+#include "task_id.hpp"
 #include <cstring>
 #include <functional>
 #include <type_traits>
@@ -39,8 +40,6 @@ namespace tpl {
 
     // NOTE: This is not a thread-safe.
     struct ValueStore {
-        using task_id = std::size_t;
-
         ValueStore(std::size_t Cap, BlockAllocator* allocator) noexcept
             : m_allocator(allocator)
             , m_values(Cap)
@@ -53,7 +52,9 @@ namespace tpl {
 
         template <typename T>
             requires (std::is_move_constructible_v<T> || std::is_copy_constructible_v<T>)
-        auto put(task_id id, T&& value) -> void {
+        auto put(TaskId task_id, T&& value) -> void {
+            auto id = tid_to_int(task_id);
+
             if (id >= m_values.size()) return;
             auto tmp = m_allocator->alloc<T>();
             if constexpr (std::is_move_constructible_v<T>) {
@@ -62,7 +63,7 @@ namespace tpl {
                 new(tmp) T(value);
             }
 
-            remove(id);
+            remove(task_id);
             std::exchange(m_values[id], Value {
                 .value = tmp,
                 .destroy = internal::ValueStoreDestructor<T>::destroy
@@ -72,7 +73,9 @@ namespace tpl {
 
         // std::expected does not allow references so we wrap it in reference wrapper
         template <typename T>
-        auto get(task_id id) noexcept -> std::expected<std::reference_wrapper<T>, ValueStoreError> {
+        auto get(TaskId task_id) noexcept -> std::expected<std::reference_wrapper<T>, ValueStoreError> {
+            auto id = tid_to_int(task_id);
+
             if (id >= m_values.size()) return std::unexpected(ValueStoreError::not_found);
             Value tmp = m_values[id];
 
@@ -88,7 +91,8 @@ namespace tpl {
         }
 
         template <typename T>
-        auto get(task_id id) const noexcept -> std::expected<std::reference_wrapper<T const&>, ValueStoreError> {
+        auto get(TaskId task_id) const noexcept -> std::expected<std::reference_wrapper<T const&>, ValueStoreError> {
+            auto id = tid_to_int(task_id);
             if (id >= m_values.size()) return std::unexpected(ValueStoreError::not_found);
             Value tmp = m_values[id];
 
@@ -105,7 +109,8 @@ namespace tpl {
 
         template <typename T>
             requires (std::is_move_constructible_v<T>)
-        auto consume(task_id id) noexcept -> std::expected<T, ValueStoreError> {
+        auto consume(TaskId task_id) noexcept -> std::expected<T, ValueStoreError> {
+            auto id = tid_to_int(task_id);
             if (id >= m_values.size()) return std::unexpected(ValueStoreError::not_found);
             Value tmp = std::exchange(m_values[id], Value{});
 
@@ -123,7 +128,8 @@ namespace tpl {
             return std::move(val);
         }
 
-        auto remove(task_id id) noexcept -> void {
+        auto remove(TaskId task_id) noexcept -> void {
+            auto id = tid_to_int(task_id);
             if (id >= m_values.size()) return;
             Value v = std::exchange(m_values[id], Value{});
             if (!v.value) return;
@@ -149,7 +155,8 @@ namespace tpl {
             return m_size.load();
         }
 
-        constexpr auto get_type(task_id id) const noexcept {
+        constexpr auto get_type(TaskId task_id) const noexcept {
+            auto id = tid_to_int(task_id);
             assert(id < m_values.size());
             return m_values[id].destroy;
         }
