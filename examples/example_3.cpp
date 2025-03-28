@@ -3,8 +3,6 @@
 #include <print>
 
 #include "tpl.hpp"
-#include "tpl/algorithm.hpp"
-#include "tpl/thread.hpp"
 
 using namespace tpl;
 
