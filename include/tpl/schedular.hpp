@@ -143,7 +143,7 @@ namespace tpl {
             helper();
 
             complete_one_task();
-            m_pool.waiter.notify_all();
+            m_pool.waiter.notify_one();
         }
 
         auto on_failure(TaskId id) {
