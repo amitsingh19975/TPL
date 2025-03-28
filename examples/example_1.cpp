@@ -2,57 +2,55 @@
 #include <print>
 
 #include "tpl.hpp"
-#include "tpl/signal_tree/tree.hpp"
+#include "tpl/schedular.hpp"
 
 using namespace tpl;
 
+struct Test {
+    Test() = default;
+    Test(Test const&) {
+        std::println("Copying");
+    }
+    Test(Test &&) {
+        std::println("Moving");
+    }
+    Test& operator=(Test const&) = default;
+    Test& operator=(Test &&) = delete;
+    ~Test() {
+        std::println("Called ~Test()");
+    }
+};
+
+template <typename T, typename E>
+void print(std::expected<T, E> const& v) {
+    if (v) std::println("Value: {}", *v);
+    else std::println("Error: {}", to_string(v.error()));
+}
+
 int main() {
-    constexpr auto N = 4ul;
-    auto tree = SignalTree<N>{};
-    /*std::println("HERE: {} => {} | {}", level.levels, level.total_bits, level.size);*/
-    /*std::print("Extents: ");*/
-    /*for (auto el: level.extents) {*/
-    /*    std::print("{}, ", el);*/
-    /*}*/
-    /*std::println("");*/
-    /**/
-    /*std::print("Strides: ");*/
-    /*for (auto el: level.strides) {*/
-    /*    std::print("{}, ", el);*/
-    /*}*/
-    /*std::println("");*/
-
-    tree.set(0);
-    tree.set(2);
-    tree.set(1);
-    tree.debug_print();
-
+    Schedular s;
+    [[maybe_unused]] auto t0 = s.add_task([](TaskToken& token) {
+        auto value = token.arg<int>(TaskId(1)).value_or(-1);
+        std::println("Hello from task 0: Called after => {}", value);
+        token.return_(0);
+    });
+    [[maybe_unused]] auto t1 = s.add_task([](TaskToken& token) {
+        std::println("Hello from task 1");
+        token.return_(1);
+    });
+    [[maybe_unused]] auto t2 = s.add_task([](TaskToken& token) {
+        auto value = token.arg<int>(TaskId(0)).value_or(-1);
+        std::println("Hello from task 2: Called after => {}", value);
+        token.return_(2);
+    });
     {
-        auto [idx, zero] = tree.select();
-        std::println("Selcted: {} => {}", idx.index, zero);
+        auto e0 = t0.deps_on(t1);
+        if (!e0) std::println("Dep Error: {}", to_string(e0.error()));
     }
     {
-        auto [idx, zero] = tree.select();
-        std::println("Selcted: {} => {}", idx.index, zero);
+        auto e0 = t2.deps_on(t0);
+        if (!e0) std::println("Dep Error: {}", to_string(e0.error()));
     }
-    {
-        auto [idx, zero] = tree.select();
-        std::println("Selcted: {} => {}", idx.index, zero);
-    }
-
-    tree.debug_print();
-
-    std::println("IsEmpty: {}", tree.empty());
-    
-
-    /*Schedular s(tpl::hardware_max_parallism);*/
-    /*auto t0 = s.add_task([]{});*/
-    //               r
-    //               4
-    //             /   \
-    //            a0    a1
-    //            2     2
-    //           /  \  /  \
-    //          b0  b1 b2  b3
-    //          1   1  1   1
+    auto tmp = s.run();
+    if (!tmp) std::println("Error: {}", to_string(tmp.error()));
 }
