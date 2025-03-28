@@ -165,7 +165,7 @@ namespace tpl {
             std::copy(b, e, begin());
         }
 
-        DynArray(size_type n, BlockAllocator* alloc = AllocatorManager::instance().get_alloc()) noexcept
+        explicit DynArray(size_type n, BlockAllocator* alloc = AllocatorManager::instance().get_alloc()) noexcept
             : m_size(n)
             , m_capacity(n)
             , m_alloc(alloc)
@@ -174,7 +174,7 @@ namespace tpl {
             new (m_data) T[m_size];
         }
 
-        DynArray(size_type n, T def, BlockAllocator* alloc = AllocatorManager::instance().get_alloc()) noexcept(std::is_nothrow_copy_constructible_v<T>)
+        explicit DynArray(size_type n, T def, BlockAllocator* alloc = AllocatorManager::instance().get_alloc()) noexcept(std::is_nothrow_copy_constructible_v<T>)
             : m_size(n)
             , m_capacity(n)
             , m_alloc(alloc)
