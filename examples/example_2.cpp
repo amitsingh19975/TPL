@@ -22,7 +22,7 @@ int main() {
         return sum;
     });
 
-    // task 1: computes sum from 50 upto 101
+    // task 2: computes sum from 50 upto 101
     auto t1 = s.add_task([]() -> std::size_t {
         auto sum = 0ul;
         for (auto i = 50ul; i < 101ul; ++i) {
@@ -30,6 +30,8 @@ int main() {
         }
         return sum;
     });
+
+    // task 3: sums the result from both tasks
     auto t2 = s.add_task([](TaskToken& token) {
         auto [lower, upper] = token.arg<std::size_t, std::size_t>();
         auto l = lower.value_or(0);
