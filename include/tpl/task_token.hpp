@@ -7,7 +7,9 @@
 #include <limits>
 #include <tuple>
 #include <utility>
+#include "worker_pool.hpp"
 #include "value_store.hpp"
+#include "task_id.hpp"
 
 namespace tpl {
     enum class TaskError {
@@ -33,7 +35,7 @@ namespace tpl {
         }
     }
 
-    struct Schedular; 
+    struct Schedular;
     enum class TaskResult: std::uint8_t {
         success,
         failed,
@@ -41,8 +43,7 @@ namespace tpl {
     };
 
     struct TaskToken {
-        using task_id = std::size_t;
-        static constexpr auto invalid = std::numeric_limits<task_id>::max();
+        static constexpr auto invalid = std::numeric_limits<std::size_t>::max();
         constexpr TaskToken(TaskToken const&) noexcept = delete;
         constexpr TaskToken(TaskToken &&) noexcept = delete;
         constexpr TaskToken& operator=(TaskToken const&) noexcept = delete;
@@ -52,15 +53,13 @@ namespace tpl {
 
         constexpr TaskToken(
             Schedular& parent,
-            task_id tid,
+            TaskId tid,
             ValueStore& store,
-            std::vector<task_id> inputs,
-            bool consumes = true
+            std::vector<std::pair<TaskId, bool /*consumable*/>> inputs
         )
             : m_id(tid)
             , m_store(store)
             , m_inputs(std::move(inputs))
-            , m_consumes(consumes)
             , m_parent(parent)
         {}
 
@@ -70,12 +69,18 @@ namespace tpl {
         }
 
         template <typename T>
-        [[nodiscard]] auto arg(task_id id) -> std::expected<T, TaskError> {
-            if (std::find(m_inputs.begin(), m_inputs.end(), id) == m_inputs.end()) {
+        [[nodiscard]] auto arg(TaskId id) -> std::expected<T, TaskError> {
+            auto it = std::find_if(m_inputs.begin(), m_inputs.end(), [id](auto el) {
+                return el.first == id;
+            });
+
+            if (it == m_inputs.end()) {
                 return std::unexpected(TaskError::invalid_task_id);
             }
 
-            if (m_consumes) {
+            auto consumable = it->second;
+
+            if (consumable) {
                 auto tmp = m_store.consume<T>(id).transform_error([](ValueStoreError e) {
                     return to_task_error(e);
                 });
@@ -91,15 +96,14 @@ namespace tpl {
             requires (sizeof...(Ts) > 0)
         [[nodiscard]] auto arg() -> std::tuple<std::expected<Ts, TaskError>...> {
             std::array type_ids{ internal::ValueStoreDestructor<Ts>::destroy... };
-            std::array<task_id, sizeof...(Ts)> ids;
-            static constexpr auto npos = std::numeric_limits<task_id>::max();
-            std::fill(ids.begin(), ids.end(), npos);
+            std::array<std::size_t, sizeof...(Ts)> ids;
+            std::fill(ids.begin(), ids.end(), invalid);
 
             for (auto id: m_inputs) {
-                auto tid = m_store.get_type(id);
+                auto tid = m_store.get_type(id.first);
                 for (auto i = 0ul; i < type_ids.size(); ++i) {
-                    if (tid == type_ids[i] && ids[i] == npos) {
-                        ids[i] = id;
+                    if (tid == type_ids[i] && ids[i] == invalid) {
+                        ids[i] = tid_to_int(id.first);
                         break;
                     }
                 }
@@ -108,22 +112,20 @@ namespace tpl {
             auto helper = [this, &ids]<std::size_t... Is>(std::index_sequence<Is...>)
                 -> std::tuple<std::expected<Ts, TaskError>...>
             {
-                return std::make_tuple(std::move(this->arg<Ts>(ids[Is]))...);
+                return std::make_tuple(std::move(this->arg<Ts>(int_to_tid(ids[Is])))...);
             };
             return helper(std::make_index_sequence<sizeof...(Ts)>{});
         }
-
-        constexpr auto is_rescheduled() const noexcept { return m_result == TaskResult::rescheduled; }
-        constexpr auto get_result() const noexcept { return m_result; }
 
         auto stop() noexcept -> void;
         auto schedule() noexcept -> void;
         auto destroy() noexcept -> void;
     private:
-        task_id m_id{};
+        friend struct WorkerPool;
+    private:
+        TaskId m_id{};
         ValueStore& m_store;
-        std::vector<task_id> m_inputs;
-        bool m_consumes{true};
+        std::vector<std::pair<TaskId, bool /*consumable*/>> m_inputs;
         TaskResult m_result{ TaskResult::success };
         Schedular& m_parent;
     };
