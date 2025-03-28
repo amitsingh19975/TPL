@@ -434,7 +434,10 @@ namespace tpl {
             return {};
         }
 
-        [[nodiscard]] static auto set_priority([[maybe_unused]] Priority p) -> bool {
+        [[nodiscard]] static auto set_priority(Priority p) -> bool {
+            if (s_priority == p) return true;
+            s_priority = p;
+
             #if defined(_WIN32)
             return SetThreadPriority(GetCurrentThread(), static_cast<int>(p)) != 0;
             #elif defined(__linux__)
@@ -634,8 +637,9 @@ namespace tpl {
             return size;
         #endif
         }
-    #if defined(_WIN32)
     private:
+        static thread_local Priority s_priority;
+    #if defined(_WIN32)
         static tid_t s_main_thread_id;
     #endif
     };
@@ -643,6 +647,7 @@ namespace tpl {
     #if defined(_WIN32)
     inline ThisThread::tid_t ThisThread::s_main_thread_id = get_native_id();
     #endif
+    inline thread_local ThisThread::Priority ThisThread::s_priority = ThisThread::get_priority().value_or(Priority::normal);
 
     inline static std::size_t hardware_max_parallism() noexcept {
         return std::max(hardware_cpu_info.active_cpus, hardware_cpu_info.active_cpus / hardware_cpu_info.logical_cpus / hardware_cpu_info.physical_cpus);
