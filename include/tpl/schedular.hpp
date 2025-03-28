@@ -156,22 +156,6 @@ namespace tpl {
             m_pool.waiter.notify_one();
         }
 
-        struct DependencyTracker {
-            TaskId id;
-            Schedular* parent;
-
-            auto deps_on(
-                std::span<DependencyTracker> ids
-            ) -> std::expected<void, SchedularError>;
-
-            template <typename... Ts>
-                requires ((std::same_as<Ts, DependencyTracker> && ...) && (sizeof...(Ts) > 0))
-            auto deps_on(Ts... ids) -> std::expected<void, SchedularError> {
-                std::array tmp { ids... };
-                return deps_on(tmp);
-            }
-        };
-
         auto build() -> std::expected<void, SchedularError> {
             for (auto& t: m_trees) {
                 t.clear();
@@ -219,6 +203,23 @@ namespace tpl {
             return {};
         }
     public:
+
+        struct DependencyTracker {
+            TaskId id;
+            Schedular* parent;
+
+            auto deps_on(
+                std::span<DependencyTracker> ids
+            ) -> std::expected<void, SchedularError>;
+
+            template <typename... Ts>
+                requires ((std::same_as<Ts, DependencyTracker> && ...) && (sizeof...(Ts) > 0))
+            auto deps_on(Ts... ids) -> std::expected<void, SchedularError> {
+                std::array tmp { ids... };
+                return deps_on(tmp);
+            }
+        };
+
         template <typename Fn>
         constexpr auto add_task(
             Fn&& fn,
@@ -249,7 +250,7 @@ namespace tpl {
 
         auto reset() {
             for (auto& t: m_trees) t.clear();
-            for (auto& info: m_info) info.state.store(TaskState::empty);
+            m_info.clear();
             m_store.clear();
         }
 
@@ -277,9 +278,10 @@ namespace tpl {
             auto& info = m_info[start];
             if (info.state != TaskState::alive) return false;
             for (auto next_id: info.dep_signals) {
-                if (tracker.contains(start)) return true;
-                tracker.insert(start);
-                if (detect_cycle(tid_to_int(next_id), tracker)) return true;
+                auto nid = tid_to_int(next_id);
+                if (tracker.contains(nid)) return true;
+                tracker.insert(nid);
+                if (detect_cycle(next_id)) return true;
             }
             return false;
         }
