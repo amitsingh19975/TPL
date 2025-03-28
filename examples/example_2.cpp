@@ -43,6 +43,11 @@ int main() {
         }
     });
     {
+        //      t0      t1
+        //       \      /
+        //        \    /
+        //         \  /
+        //          t2
         auto e0 = t2.deps_on(t0, t1);
         if (!e0) std::println("Dep Error: {}", to_string(e0.error()));
     }
