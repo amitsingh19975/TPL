@@ -9,7 +9,7 @@
 using namespace tpl;
 
 int main() {
-    Schedular s;
+    Scheduler s;
     {
         par::for_each<2>(s, range_t(0, 10, 1), [](range_t r) {
             std::string tmp;

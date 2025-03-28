@@ -12,7 +12,7 @@ void print(std::expected<T, E> const& v) {
 }
 
 int main() {
-    Schedular s;
+    Scheduler s;
     auto t0 = s.add_task([](TaskToken& token) {
         auto value = token.arg<int>(TaskId(1)).value_or(-1);
         std::println("Hello from task 0: Called after => {}", value);

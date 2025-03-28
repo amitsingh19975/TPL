@@ -31,18 +31,18 @@ namespace tpl {
         }
     }
 
-    struct Schedular {
+    struct Scheduler {
         static constexpr std::size_t capacity = 128ul;
         using signal_tree = SignalTree<capacity>;
 
-        Schedular()
+        Scheduler()
             : m_pool(*this)
         {}
-        Schedular(Schedular const&) = delete;
-        Schedular(Schedular &&) = delete;
-        Schedular& operator=(Schedular const&) = delete;
-        Schedular& operator=(Schedular &&) = delete;
-        ~Schedular() = default;
+        Scheduler(Scheduler const&) = delete;
+        Scheduler(Scheduler &&) = delete;
+        Scheduler& operator=(Scheduler const&) = delete;
+        Scheduler& operator=(Scheduler &&) = delete;
+        ~Scheduler() = default;
     private:
         friend struct TaskToken;
         friend struct WorkerPool;
@@ -206,7 +206,7 @@ namespace tpl {
 
         struct DependencyTracker {
             TaskId id;
-            Schedular* parent;
+            Scheduler* parent;
 
             auto deps_on(
                 std::span<DependencyTracker> ids
@@ -319,7 +319,7 @@ namespace tpl {
     inline auto TaskToken::schedule() noexcept -> void {
         auto id = tid_to_int(m_id);
         auto& info = m_parent.m_info[id];
-        if (info.state != Schedular::TaskState::alive) return;
+        if (info.state != Scheduler::TaskState::alive) return;
         m_parent.set_signal(m_id);
         m_result = TaskResult::rescheduled;
     }
@@ -327,11 +327,11 @@ namespace tpl {
     inline auto TaskToken::stop() noexcept -> void {
         m_store.remove(m_id);
         auto id = tid_to_int(m_id);
-        m_parent.m_info[id].state.store(Schedular::TaskState::empty);
+        m_parent.m_info[id].state.store(Scheduler::TaskState::empty);
         m_result = TaskResult::failed;
     }
 
-    inline auto Schedular::DependencyTracker::deps_on(
+    inline auto Scheduler::DependencyTracker::deps_on(
         std::span<DependencyTracker> ids
     ) -> std::expected<void, SchedularError> {
         for ([[maybe_unused]] auto [child, p]: ids) {

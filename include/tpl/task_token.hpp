@@ -35,7 +35,7 @@ namespace tpl {
         }
     }
 
-    struct Schedular;
+    struct Scheduler;
     enum class TaskResult: std::uint8_t {
         success,
         failed,
@@ -52,7 +52,7 @@ namespace tpl {
 
 
         constexpr TaskToken(
-            Schedular& parent,
+            Scheduler& parent,
             TaskId tid,
             ValueStore& store,
             std::vector<std::pair<TaskId, bool /*consumable*/>> inputs
@@ -136,7 +136,7 @@ namespace tpl {
         ValueStore& m_store;
         std::vector<std::pair<TaskId, bool /*consumable*/>> m_inputs;
         TaskResult m_result{ TaskResult::success };
-        Schedular& m_parent;
+        Scheduler& m_parent;
     };
 } // namespace tpl
 

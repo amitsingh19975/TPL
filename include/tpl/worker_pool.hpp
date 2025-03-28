@@ -6,13 +6,13 @@
 
 namespace tpl {
 
-    struct Schedular;
+    struct Scheduler;
 
     struct WorkerPool {
         using thread_t = std::thread;
 
         WorkerPool(
-            Schedular& schedular,
+            Scheduler& schedular,
             std::size_t nthreads = tpl::hardware_max_parallism()
         ) : m_parent(schedular)
         {
@@ -46,7 +46,7 @@ namespace tpl {
     private:
         std::vector<thread_t> m_threads;
         std::atomic<bool> m_is_running{true};
-        Schedular& m_parent;
+        Scheduler& m_parent;
     };
 } // namespace tpl
 

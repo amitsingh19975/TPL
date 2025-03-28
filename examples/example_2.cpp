@@ -12,7 +12,7 @@ void print(std::expected<T, E> const& v) {
 }
 
 int main() {
-    Schedular s;
+    Scheduler s;
     // task 1: computes sum upto 50
     auto t0 = s.add_task([]() -> std::size_t {
         auto sum = 0ul;
