@@ -324,16 +324,6 @@ namespace tpl {
 
     inline auto TaskToken::stop() noexcept -> void {
         m_store.remove(m_id);
-
-        auto id = tid_to_int(m_id);
-        auto& info = m_parent.m_info[id];
-        if (info.state != Schedular::TaskState::alive) return;
-        m_result = TaskResult::failed;
-        m_parent.m_info[id].state.store(Schedular::TaskState::dead);
-    }
-
-    inline auto TaskToken::destroy() noexcept -> void {
-        m_store.remove(m_id);
         auto id = tid_to_int(m_id);
         m_parent.m_info[id].state.store(Schedular::TaskState::empty);
         m_result = TaskResult::failed;

@@ -123,9 +123,8 @@ namespace tpl {
             return helper(std::make_index_sequence<sizeof...(Ts)>{});
         }
 
-        auto stop() noexcept -> void;
         auto schedule() noexcept -> void;
-        auto destroy() noexcept -> void;
+        auto stop() noexcept -> void;
 
         constexpr auto is_success() const noexcept -> bool {
             return m_result == TaskResult::success;
