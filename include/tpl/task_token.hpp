@@ -64,8 +64,10 @@ namespace tpl {
         {}
 
         template <typename T>
-        auto return_(T&& val) {
+        auto return_(T&& val) -> bool {
+            if (m_result == TaskResult::failed) return false;
             m_store.put(m_id, std::forward<T>(val));
+            return true;
         }
 
         template <typename T>
