@@ -38,6 +38,11 @@ namespace tpl {
         Schedular()
             : m_pool(*this)
         {}
+        Schedular(Schedular const&) = delete;
+        Schedular(Schedular &&) = delete;
+        Schedular& operator=(Schedular const&) = delete;
+        Schedular& operator=(Schedular &&) = delete;
+        ~Schedular() = default;
     private:
         friend struct TaskToken;
         friend struct WorkerPool;
@@ -314,10 +319,9 @@ namespace tpl {
     inline auto TaskToken::schedule() noexcept -> void {
         auto id = tid_to_int(m_id);
         auto& info = m_parent.m_info[id];
-        if (info.state != Schedular::TaskState::dead) return;
+        if (info.state != Schedular::TaskState::alive) return;
         m_parent.set_signal(m_id);
         m_result = TaskResult::rescheduled;
-        m_parent.m_info[id].state.store(Schedular::TaskState::alive);
     }
 
     inline auto TaskToken::stop() noexcept -> void {
