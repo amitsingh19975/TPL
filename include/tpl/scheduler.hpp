@@ -270,6 +270,7 @@ namespace tpl {
     private:
         auto detect_cycle(TaskId start) const -> bool {
             std::unordered_set<std::size_t> tracker{};
+            tracker.insert(tid_to_int(start));
             return detect_cycle(tid_to_int(start), tracker);
         }
 
