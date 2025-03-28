@@ -2,3 +2,4 @@
 #include "tpl/dyn_array.hpp"
 #include "tpl/queue.hpp"
 #include "tpl/schedular.hpp"
+#include "tpl/algorithm.hpp"
