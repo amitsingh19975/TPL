@@ -63,6 +63,10 @@ namespace tpl {
             , m_parent(parent)
         {}
 
+        constexpr auto owner_id() const noexcept -> TaskId {
+            return m_id;
+        }
+
         template <typename T>
         auto return_(T&& val) -> bool {
             if (m_result == TaskResult::failed) return false;
@@ -122,6 +126,10 @@ namespace tpl {
         auto stop() noexcept -> void;
         auto schedule() noexcept -> void;
         auto destroy() noexcept -> void;
+
+        constexpr auto is_success() const noexcept -> bool {
+            return m_result == TaskResult::success;
+        }
     private:
         friend struct WorkerPool;
     private:
