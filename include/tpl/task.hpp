@@ -3,6 +3,7 @@
 
 #include <concepts>
 #include <functional>
+#include <type_traits>
 #include "thread.hpp"
 #include "task_token.hpp"
 
@@ -18,9 +19,25 @@ namespace tpl {
         {
             m_fn = [fn = std::forward<Fn>(fn)](TaskToken& t) {
                 if constexpr (std::invocable<Fn, TaskToken&>) {
-                    std::invoke(fn, t);
+                    using ret_t = decltype(std::invoke(fn, t));
+                    if constexpr (!std::is_void_v<ret_t>) {
+                        decltype(auto) res = std::invoke(fn, t);
+                        if (t.is_success()) {
+                            t.return_(std::forward<decltype(res)>(res));
+                        }
+                    } else {
+                        (void)std::invoke(fn, t);
+                    }
                 } else {
-                    std::invoke(fn);
+                    using ret_t = decltype(std::invoke(fn));
+                    if constexpr (!std::is_void_v<ret_t>) {
+                        decltype(auto) res = std::invoke(fn);
+                        if (t.is_success()) {
+                            t.return_(std::forward<decltype(res)>(res));
+                        }
+                    } else {
+                        (void)std::invoke(fn);
+                    }
                 }
             };
         }
