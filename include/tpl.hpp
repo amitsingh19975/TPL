@@ -3,3 +3,4 @@
 #include "tpl/queue.hpp"
 #include "tpl/scheduler.hpp"
 #include "tpl/algorithm.hpp"
+#include "tpl/cow.hpp"

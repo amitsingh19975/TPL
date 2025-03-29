@@ -3,6 +3,7 @@
 
 #include "allocator.hpp"
 #include "task_id.hpp"
+#include "cow.hpp"
 #include <cstring>
 #include <functional>
 #include <type_traits>
@@ -73,7 +74,7 @@ namespace tpl {
 
         // std::expected does not allow references so we wrap it in reference wrapper
         template <typename T>
-        auto get(TaskId task_id) noexcept -> std::expected<std::reference_wrapper<T>, ValueStoreError> {
+        auto get(TaskId task_id) noexcept -> std::expected<Cow<T>, ValueStoreError> {
             auto id = tid_to_int(task_id);
 
             if (id >= m_values.size()) return std::unexpected(ValueStoreError::not_found);
@@ -87,29 +88,12 @@ namespace tpl {
                 return std::unexpected(ValueStoreError::type_mismatch);
             }
             auto ptr = reinterpret_cast<T*>(tmp.value);
-            return std::ref(*ptr);
-        }
-
-        template <typename T>
-        auto get(TaskId task_id) const noexcept -> std::expected<std::reference_wrapper<T const&>, ValueStoreError> {
-            auto id = tid_to_int(task_id);
-            if (id >= m_values.size()) return std::unexpected(ValueStoreError::not_found);
-            Value tmp = m_values[id];
-
-            if (!tmp.destroy) {
-                return std::unexpected(ValueStoreError::not_found);
-            }
-
-            if (internal::ValueStoreDestructor<T>::destroy != tmp.destroy) {
-                return std::unexpected(ValueStoreError::type_mismatch);
-            }
-            auto ptr = reinterpret_cast<T*>(tmp.value);
-            return std::ref(*ptr);
+            return Cow<T>(ptr);
         }
 
         template <typename T>
             requires (std::is_move_constructible_v<T>)
-        auto consume(TaskId task_id) noexcept -> std::expected<T, ValueStoreError> {
+        auto consume(TaskId task_id) noexcept -> std::expected<Cow<T>, ValueStoreError> {
             auto id = tid_to_int(task_id);
             if (id >= m_values.size()) return std::unexpected(ValueStoreError::not_found);
             Value tmp = std::exchange(m_values[id], Value{});
@@ -125,7 +109,7 @@ namespace tpl {
             auto ptr = reinterpret_cast<T*>(tmp.value);
             auto val = std::move(*ptr);
             m_allocator->dealloc(ptr);
-            return std::move(val);
+            return Cow<T>(std::move(val));
         }
 
         auto remove(TaskId task_id) noexcept -> void {

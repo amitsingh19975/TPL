@@ -10,6 +10,7 @@
 #include "worker_pool.hpp"
 #include "value_store.hpp"
 #include "task_id.hpp"
+#include "cow.hpp"
 
 namespace tpl {
     enum class TaskError {
@@ -50,7 +51,6 @@ namespace tpl {
         constexpr TaskToken& operator=(TaskToken &&) noexcept = delete;
         constexpr ~TaskToken() noexcept = default;
 
-
         constexpr TaskToken(
             Scheduler& parent,
             TaskId tid,
@@ -75,7 +75,7 @@ namespace tpl {
         }
 
         template <typename T>
-        [[nodiscard]] auto arg(TaskId id) -> std::expected<T, TaskError> {
+        [[nodiscard]] auto arg(TaskId id) -> std::expected<Cow<T>, TaskError> {
             auto it = std::find_if(m_inputs.begin(), m_inputs.end(), [id](auto el) {
                 return el.first == id;
             });
@@ -93,14 +93,19 @@ namespace tpl {
                 return std::move(tmp);
             } else {
                 auto tmp = m_store.get<T>(id);
-                if (tmp) return { tmp.value().get() };
+                if (tmp) return std::move(tmp.value());
                 return std::unexpected(to_task_error(tmp.error()));
             }
         }
 
+        template <typename T>
+        [[nodiscard]] auto all_arg() -> std::expected<std::vector<T>, TaskError> {
+            return {};
+        }
+
         template <typename... Ts>
             requires (sizeof...(Ts) > 0)
-        [[nodiscard]] auto arg() -> std::tuple<std::expected<Ts, TaskError>...> {
+        [[nodiscard]] auto arg() -> std::tuple<std::expected<Cow<Ts>, TaskError>...> {
             std::array type_ids{ internal::ValueStoreDestructor<Ts>::destroy... };
             std::array<std::size_t, sizeof...(Ts)> ids;
             std::fill(ids.begin(), ids.end(), invalid);
@@ -116,7 +121,7 @@ namespace tpl {
             }
 
             auto helper = [this, &ids]<std::size_t... Is>(std::index_sequence<Is...>)
-                -> std::tuple<std::expected<Ts, TaskError>...>
+                -> std::tuple<std::expected<Cow<Ts>, TaskError>...>
             {
                 return std::make_tuple(std::move(this->arg<Ts>(int_to_tid(ids[Is])))...);
             };

@@ -35,7 +35,7 @@ TEST_CASE("Value Store", "[value_store]" ) {
             {
                 auto val = store.consume<int>(TaskId(1));
                 REQUIRE(val.has_value());
-                REQUIRE(val.value() == 10);
+                REQUIRE(val.value().ref() == 10);
                 REQUIRE(store.size() == 2);
             }
 

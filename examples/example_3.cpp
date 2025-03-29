@@ -32,7 +32,7 @@ int main() {
             return 10;
         });
         auto e0 = par::for_each</*Chunks=*/ 2>(s, range_t(0, 10, 1), t, [](range_t r, TaskToken& token) {
-            auto offset = std::get<0>(token.arg<std::size_t>()).value_or(0);
+            auto offset = std::get<0>(token.arg<std::size_t>()).value_or(0).take();
             std::string tmp;
 
             tmp += std::format("Running on: {}, Offset: {}\n", ThisThread::get_native_id(), offset);

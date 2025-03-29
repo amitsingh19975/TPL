@@ -335,7 +335,7 @@ namespace tpl {
         }
 
         auto insert(size_type pos, T val) noexcept {
-            assert(pos < size());
+            assert(pos <= size());
             grow_if_need(1);
             if (pos + 1 == size()) {
                 m_data[m_size++] = std::move(val);

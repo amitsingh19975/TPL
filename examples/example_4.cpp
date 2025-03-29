@@ -37,7 +37,8 @@ int main() {
             return 10;
         });
         auto e0 = par::reduce</*Chunks=*/ 2>(s, range_t(0, 10, 1), t, [](range_t r, TaskToken& token) {
-            auto offset = std::get<0>(token.arg<std::size_t>()).value_or(0);
+            auto offset = std::get<0>(token.arg<std::size_t>()).value_or(Cow(std::size_t())).take();
+            std::println("Offset: {}", offset);
             std::size_t res {};
             for (auto i = r.start; i < r.end; i+= r.stride) {
                 res += i;

@@ -34,8 +34,8 @@ int main() {
     // task 3: sums the result from both tasks
     auto t2 = s.add_task([](TaskToken& token) {
         auto [lower, upper] = token.arg<std::size_t, std::size_t>();
-        auto l = lower.value_or(0);
-        auto r = upper.value_or(0);
+        auto l = lower.value_or(0).take();
+        auto r = upper.value_or(0).take();
         std::println("Lower: {}, Upper: {}", l, r);
         std::size_t sum = (100 * 101) / 2;
         if (sum != l + r) {

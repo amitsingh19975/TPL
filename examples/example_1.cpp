@@ -14,7 +14,7 @@ void print(std::expected<T, E> const& v) {
 int main() {
     Scheduler s;
     auto t0 = s.add_task([](TaskToken& token) {
-        auto value = token.arg<int>(TaskId(1)).value_or(-1);
+        auto value = token.arg<int>(TaskId(1)).value_or(Cow(-1)).take();
         std::println("Hello from task 0: Called after => {}", value);
         token.stop();
         return 0;
@@ -28,7 +28,7 @@ int main() {
         return 1;
     });
     auto t2 = s.add_task([](TaskToken& token) {
-        auto value = token.arg<int>(TaskId(0)).value_or(-1);
+        auto value = token.arg<int>(TaskId(0)).value_or(Cow(-1)).take();
         std::println("Hello from task 2: Called after => {}", value);
         return 2;
     });

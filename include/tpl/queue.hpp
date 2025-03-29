@@ -320,6 +320,7 @@ namespace tpl {
         constexpr Queue& operator=(Queue const&) noexcept = delete;
         constexpr Queue& operator=(Queue &&) noexcept = default;
         ~Queue() noexcept {
+            std::println("{} == {} + {}", m_node_allocator.total_objects(), nodes(), m_free_nodes.size());
             assert(m_node_allocator.total_objects() == nodes() + m_free_nodes.size());
             {
                 Node* tmp = m_tail.load();
@@ -334,25 +335,21 @@ namespace tpl {
 
         constexpr auto size() const noexcept -> size_type {
             size_type count{};
-            node_scope(m_tail, std::memory_order_relaxed, [&count](Node const* tmp) {
-                if (!tmp) return;
-                while (tmp) {
-                    count += tmp->q.size();
-                    tmp = tmp->next.load(std::memory_order_relaxed);
-                }
-            });
+            auto tail = m_tail.load(std::memory_order_relaxed);
+            while (tail) {
+                count += tail->q.size();
+                tail = tail->next.load(std::memory_order_relaxed);
+            }
             return count;
         }
 
         constexpr auto nodes() const noexcept -> size_type {
             size_type count{};
-            node_scope(m_tail, std::memory_order_relaxed, [&count](Node const* tmp) {
-                if (!tmp) return;
-                while (tmp) {
-                    ++count;
-                    tmp = tmp->next.load(std::memory_order_relaxed);
-                }
-            });
+            auto tail = m_tail.load(std::memory_order_relaxed);
+            while (tail) {
+                ++count;
+                tail = tail->next.load(std::memory_order_relaxed);
+            }
             return count;
         }
 
