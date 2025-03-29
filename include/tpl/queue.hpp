@@ -320,8 +320,6 @@ namespace tpl {
         constexpr Queue& operator=(Queue const&) noexcept = delete;
         constexpr Queue& operator=(Queue &&) noexcept = default;
         ~Queue() noexcept {
-            std::println("{} == {} + {}", m_node_allocator.total_objects(), nodes(), m_free_nodes.size());
-            assert(m_node_allocator.total_objects() == nodes() + m_free_nodes.size());
             {
                 Node* tmp = m_tail.load();
                 while (tmp) {
@@ -387,15 +385,18 @@ namespace tpl {
                 head = m_head.load(std::memory_order_acquire);
 
                 if (head != nullptr) {
-                    if (head->q.push_value(val)) break;
+                    if (head->q.push_value(val)) {
+                        break;
+                    }
                 }
 
                 if (!node) {
                     node = m_free_nodes.pop().value_or(nullptr);
-
                     if (!node) {
                         node = m_node_allocator.alloc<Node>();
                         new(node) Node(&m_data_allocator);
+                    } else {
+                        node->next = nullptr;
                     }
                 }
 
@@ -405,7 +406,12 @@ namespace tpl {
                     continue;
                 }
 
+                // (old head) -> node(new head)
                 if (head) head->next.store(node, std::memory_order_relaxed);
+            }
+
+            if (node != head && node) {
+                push_back(node);
             }
 
             while (true) {
@@ -463,12 +469,12 @@ namespace tpl {
 
         constexpr auto push_back(Node* node) noexcept -> void {
             if (!node) return;
-            node->next.store(nullptr, std::memory_order_relaxed);
 
             while (!m_free_nodes.emplace(node)) {
                 Node* tmp = m_free_nodes.pop().value_or(nullptr);
                 if (!tmp) continue;
 
+                tmp->~Node();
                 m_node_allocator.dealloc(tmp);
             }
         }
