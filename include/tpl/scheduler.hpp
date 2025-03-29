@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <unordered_set>
 #include <vector>
@@ -144,6 +145,7 @@ namespace tpl {
 
             complete_one_task();
             m_pool.waiter.notify_one();
+            m_last_processed_task.store(id);
         }
 
         auto on_failure(TaskId id) {
@@ -255,17 +257,35 @@ namespace tpl {
         }
 
         auto run() -> std::expected<void, SchedularError> {
+            m_last_processed_task.store(int_to_tid(std::numeric_limits<std::size_t>::max()));
             auto res = build();
             if (!res) return res;
             if (m_tasks == 0) return {};
             m_is_running = true;
 
             m_pool.waiter.notify_all();
-            waiter.wait([this] {
+            m_waiter.wait([this] {
                 return m_tasks == 0 && m_pool.is_running();
             });
             m_is_running = false;
             return {};
+        }
+
+        template <typename T>
+        auto get_result(TaskId id) -> std::expected<T, ValueStoreError> {
+            if (m_is_running) return std::unexpected(ValueStoreError::not_found);
+            auto temp = m_store.consume<T>(id);
+            return temp.transform([](auto& v) { return v.take(); });
+        }
+
+        template <typename T>
+        auto get_result(DependencyTracker t) -> std::expected<T, ValueStoreError> {
+            return get_result<T>(t.id);
+        }
+
+        template <typename T>
+        auto get_last_result() -> std::expected<T, ValueStoreError> {
+            return get_result<T>(m_last_processed_task.load());
         }
     private:
         auto detect_cycle(TaskId start) const -> bool {
@@ -302,7 +322,7 @@ namespace tpl {
         }
 
         auto complete_one_task() -> void {
-            waiter.notify_all([this] {
+            m_waiter.notify_all([this] {
                 m_tasks.fetch_sub(1);
             });
         }
@@ -314,7 +334,8 @@ namespace tpl {
         std::atomic<bool> m_is_running{false};
         ValueStore m_store{m_info.size(), m_alloc.get()};
         WorkerPool m_pool;
-        internal::Waiter waiter;
+        internal::Waiter m_waiter;
+        std::atomic<TaskId> m_last_processed_task{int_to_tid(std::numeric_limits<std::size_t>::max())};
     };
 
     inline auto TaskToken::schedule() noexcept -> void {

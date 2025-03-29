@@ -4,10 +4,9 @@
 #include "scheduler.hpp"
 #include "range.hpp"
 #include "task_token.hpp"
-#include "tpl/allocator.hpp"
-#include "tpl/dyn_array.hpp"
-#include <future>
-#include <memory>
+#include <cstddef>
+#include <iterator>
+#include <numeric>
 #include <type_traits>
 
 namespace tpl::par {
@@ -49,63 +48,51 @@ namespace tpl::par {
             return {};
         }
 
-        template <typename T>
-        struct ReduceResult {
-            ReduceResult(std::size_t n, T acc)
-                : m_data(std::make_unique<std::vector<T>>(n, T{}))
-                , m_acc(acc)
-            {}
-
-            constexpr auto get() const noexcept -> T {
-                auto& v = *m_data.get();
-                T res = m_acc;
-                for (auto i = 0ul; i < v.size(); ++i) {
-                    res += v[i];
-                }
-                return res;
-            }
-
-            constexpr auto& data() noexcept {
-                return *m_data.get();
-            }
-        private:
-            std::unique_ptr<std::vector<T>> m_data;
-            T m_acc;
-        };
-
-        template <std::size_t Chunks = 512, typename Acc, typename Fn, bool R>
+        template <std::size_t Chunks = 512, typename Acc, typename I, typename Fn>
+            requires (std::incrementable<I>)
         auto reduce(
             Scheduler& s,
-            Range<R> r,
-            Fn&& fn,
+            I b,
+            I e,
             Acc acc,
+            Fn&& fn,
             auto&& dep_fn
-        ) -> std::expected<ReduceResult<Acc>, SchedularError> {
-            auto items = (r.size() + Chunks - 1) / Chunks;
-            auto result = ReduceResult<Acc>(items, acc);
+        ) -> std::expected<Scheduler::DependencyTracker, SchedularError> {
+            auto size = static_cast<std::size_t>(std::distance(b, e));
+            auto items = (size + Chunks - 1) / Chunks;
 
-            for (auto i = 0ul; i < items; ++i) {
-                auto start = r.start + i * Chunks * r.stride;
-                auto end = std::min(start + r.stride * Chunks, r.end);
-                auto range = Range<R>(start, end, r.stride);
-                auto t = s.add_task([range, &fn, i, &v=result.data()](auto& t) {
-                    if constexpr (std::is_invocable_v<Fn, Range<R>, TaskToken&>) {
-                        static_assert(std::is_invocable_r_v<Acc, Fn, Range<R>, TaskToken&>);
-                        v[i] = std::invoke(fn, range, t);
-                    } else if constexpr (std::is_invocable_v<Fn, TaskToken&, Range<R>>) {
-                        static_assert(std::is_invocable_r_v<Acc, Fn, TaskToken&, Range<R>>);
-                        v[i] = std::invoke(fn, t, range);
-                    } else if constexpr (std::is_invocable_v<Fn, Range<R>>) {
-                        static_assert(std::is_invocable_r_v<Acc, Fn, Range<R>>);
-                        v[i] = std::invoke(fn, range);
-                    } else if constexpr (std::is_invocable_v<Fn, TaskToken&>) {
-                        static_assert(std::is_invocable_r_v<Acc, Fn, TaskToken&>);
-                        v[i] = std::invoke(fn, t);
+            auto reduce_task = s.add_task([acc, &fn](TaskToken& t) {
+                auto args = t.all_of<Acc>();
+                return std::accumulate(args.begin(), args.end(), acc, [&fn](Acc acc, auto& v) {
+                    if constexpr (std::is_invocable_v<Fn, Acc, Acc, TaskToken*>) {
+                        return std::invoke(fn, acc, v.ref(), nullptr);
+                    } else if constexpr (std::is_invocable_v<Fn, TaskToken*, Acc, Acc>) {
+                        return std::invoke(fn, nullptr, acc, v.ref());
                     } else {
-                        static_assert(std::is_invocable_r_v<Acc, Fn>);
-                        v[i] = std::invoke(fn);
+                        return std::invoke(fn, acc, v.ref());
                     }
                 });
+            });
+
+            for (auto i = 0ul; i < items; ++i) {
+                auto start = i * Chunks;
+                auto end = std::min(start + Chunks, size);
+                auto nb = std::next(b, static_cast<std::ptrdiff_t>(start));
+                auto ne = std::next(b, static_cast<std::ptrdiff_t>(end));
+                auto t = s.add_task([b = nb, e = ne, &fn](TaskToken& t) {
+                    auto res = Acc{};
+                    for (auto it = b; it != e; ++it) {
+                        if constexpr (std::is_invocable_v<Fn, Acc, Acc, TaskToken*>) {
+                            res = std::invoke(fn, res, *it, &t);
+                        } else if constexpr (std::is_invocable_v<Fn, TaskToken*, Acc, Acc>) {
+                            res = std::invoke(fn, &t, res, *it);
+                        } else {
+                            res = std::invoke(fn, res, *it);
+                        }
+                    }
+                    return res;
+                });
+
                 using ret_t = decltype(dep_fn(t));
                 if constexpr (!std::is_void_v<ret_t>) {
                     auto res = dep_fn(t);
@@ -113,9 +100,11 @@ namespace tpl::par {
                 } else {
                     dep_fn(t);
                 }
+
+                reduce_task.deps_on(t);
             }
 
-            return std::move(result);
+            return reduce_task;
         }
     } // namespace internal
 
@@ -146,25 +135,29 @@ namespace tpl::par {
         );
     }
 
-    template <std::size_t Chunks = 512, typename Acc, typename Fn, bool R>
+    template <std::size_t Chunks = 512, typename Acc, typename I, typename Fn>
+        requires (std::incrementable<I>)
     auto reduce(
         Scheduler& s,
-        Range<R> r,
-        Fn&& fn,
-        Acc acc
-    ) -> std::expected<internal::ReduceResult<Acc>, SchedularError> {
-        return internal::reduce<Chunks>(s, r, std::forward<Fn>(fn), acc, [](auto) {});
+        I b,
+        I e,
+        Acc acc,
+        Fn&& fn
+    ) -> std::expected<Scheduler::DependencyTracker, SchedularError> {
+        return internal::reduce<Chunks>(s, b, e, acc, std::forward<Fn>(fn), [](auto) {});
     }
 
-    template <std::size_t Chunks = 512, typename Acc, typename Fn, bool R>
+    template <std::size_t Chunks = 512, typename Acc, typename I, typename Fn>
+        requires (std::incrementable<I>)
     auto reduce(
         Scheduler& s,
-        Range<R> r,
+        I b,
+        I e,
         Scheduler::DependencyTracker d,
-        Fn&& fn,
-        Acc acc
-    ) -> std::expected<internal::ReduceResult<Acc>, SchedularError> {
-        return internal::reduce<Chunks>(s, r, std::forward<Fn>(fn), acc, [d](auto t) {
+        Acc acc,
+        Fn&& fn
+    ) -> std::expected<Scheduler::DependencyTracker, SchedularError> {
+        return internal::reduce<Chunks>(s, b, e, acc, std::forward<Fn>(fn), [d](auto t) {
             return t.deps_on(d);
         });
     }
