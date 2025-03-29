@@ -99,13 +99,13 @@ namespace tpl {
         }
 
         template <typename T>
-        [[nodiscard]] auto args_as_vec() -> std::vector<std::expected<Cow<T>, TaskError>> {
-            std::vector<std::expected<Cow<T>, TaskError>> res(
-                m_inputs.size(),
-                std::unexpected(TaskError::not_found)
-            );
-            for (auto i = 0ul; auto [id, _]: m_inputs) {
-                res[i++] = std::move(arg<T>(id));
+        [[nodiscard]] auto all_of() -> std::vector<Cow<T>> {
+            std::vector<Cow<T>> res;
+            res.reserve(m_inputs.size());
+            for (auto [id, _]: m_inputs) {
+                auto tmp = arg<T>(id);
+                if (!tmp) continue;
+                res.emplace_back(std::move(*tmp));
             }
             return res;
         }
