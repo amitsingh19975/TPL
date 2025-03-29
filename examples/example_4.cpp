@@ -20,7 +20,8 @@ int main() {
         auto tmp = s.run();
         if (!tmp) std::println("Error: {}", to_string(tmp.error()));
         auto value = s.get_result<std::size_t>(*res).value_or(0);
-        std::println("Res: {} == {}", ((101 * 100) / 2), value);
+        auto size = v.size();
+        std::println("Res: {} == {}", ((size * (size + 1)) / 2), value);
     }
 
     s.reset();
@@ -51,8 +52,9 @@ int main() {
 
         auto tmp = s.run();
         auto value = s.get_result<std::size_t>(*e0).value_or(0);
-        auto total = (10 * 11) / 2;
-        std::println("Res: {} == {}", (total + (10 / 2) * 10 * 2), value);
+        auto size = v.size();
+        auto total = (size * (size + 1)) / 2;
+        std::println("Res: {} == {}", (total + (size / 2) * 10 * 2), value);
         if (!tmp) std::println("Error: {}", to_string(tmp.error()));
     }
 }
