@@ -320,15 +320,7 @@ namespace tpl {
         constexpr Queue& operator=(Queue const&) noexcept = delete;
         constexpr Queue& operator=(Queue &&) noexcept = default;
         ~Queue() noexcept {
-            {
-                Node* tmp = m_tail.load();
-                while (tmp) {
-                    tmp->q.clear();
-                    auto next = tmp->next.load();
-                    tmp = next;
-                }
-            }
-            m_node_allocator.reset();
+            reset();
         }
 
         constexpr auto size() const noexcept -> size_type {
@@ -353,6 +345,22 @@ namespace tpl {
 
         constexpr auto empty() const noexcept -> bool {
             return size() == 0;
+        }
+
+        auto reset() noexcept {
+            {
+                Node* tmp = m_tail.load();
+                while (tmp) {
+                    tmp->q.clear();
+                    auto next = tmp->next.load();
+                    tmp->~Node();
+                    tmp = next;
+                }
+            }
+            m_tail = nullptr;
+            m_head = nullptr;
+            m_node_allocator.reset();
+            m_data_allocator.reset();
         }
 
         template <typename... Args>
