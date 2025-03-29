@@ -5,7 +5,6 @@
 #include "task_id.hpp"
 #include "cow.hpp"
 #include <cstring>
-#include <functional>
 #include <type_traits>
 #include <expected>
 #include <utility>
@@ -17,6 +16,7 @@ namespace tpl {
         template <typename T>
         struct ValueStoreDestructor {
             static void destroy(void* ptr) noexcept {
+                if (!ptr) return;
                 if constexpr (
                     !std::is_trivially_destructible_v<T>
                 ) {
@@ -65,10 +65,10 @@ namespace tpl {
             }
 
             remove(task_id);
-            std::exchange(m_values[id], Value {
+            m_values[id] = Value {
                 .value = tmp,
                 .destroy = internal::ValueStoreDestructor<T>::destroy
-            });
+            };
             m_size.fetch_add(1);
         }
 
@@ -116,14 +116,14 @@ namespace tpl {
             auto id = tid_to_int(task_id);
             if (id >= m_values.size()) return;
             Value v = std::exchange(m_values[id], Value{});
-            if (!v.value) return;
+            if (!v.destroy) return;
             v.destroy(v.value);
             m_size.fetch_sub(1);
         }
 
         auto clear() noexcept -> void {
             for (auto& v: m_values) {
-                if (!v.value) continue;
+                if (!v.destroy) continue;
                 v.destroy(v.value);
                 v.destroy = nullptr;
             }
