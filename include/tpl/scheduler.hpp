@@ -3,6 +3,7 @@
 
 #include "signal_tree/tree.hpp"
 #include "task.hpp"
+#include "tpl/thread.hpp"
 #include "waiter.hpp"
 #include "worker_pool.hpp"
 #include "task_token.hpp"
@@ -330,7 +331,7 @@ namespace tpl {
         std::unique_ptr<BlockAllocator> m_alloc{ std::make_unique<BlockAllocator>() };
         std::vector<signal_tree> m_trees{1};
         std::vector<TaskInfo> m_info{capacity};
-        std::atomic<std::size_t> m_tasks{false};
+        std::atomic<std::size_t> m_tasks{0};
         std::atomic<bool> m_is_running{false};
         ValueStore m_store{m_info.size(), m_alloc.get()};
         WorkerPool m_pool;
@@ -382,7 +383,9 @@ namespace tpl {
         return {};
     }
 
-    inline auto WorkerPool::do_work() -> void {
+    inline auto WorkerPool::do_work(std::size_t thread_id) -> void {
+        ThisThread::s_pool_id = thread_id;
+
         while (m_is_running.load(std::memory_order_acquire)) {
             waiter.wait([this] {
                 return !m_is_running.load(std::memory_order_acquire) || (
@@ -407,6 +410,8 @@ namespace tpl {
             case TaskResult::rescheduled: m_parent.on_reschedule(id); break;
             }
         }
+
+        ThisThread::s_pool_id = std::numeric_limits<std::size_t>::max();
     }
 
 } // namespace tpl

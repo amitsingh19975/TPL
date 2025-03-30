@@ -4,6 +4,7 @@
 #include "hw_config.hpp"
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <optional>
 #include <thread>
 #include <chrono>
@@ -637,7 +638,14 @@ namespace tpl {
             return size;
         #endif
         }
+
+        static auto pool_id() noexcept -> std::size_t {
+            return s_pool_id;
+        }
     private:
+        friend struct WorkerPool;
+    private:
+        static thread_local std::size_t s_pool_id;
         static thread_local Priority s_priority;
     #if defined(_WIN32)
         static tid_t s_main_thread_id;
@@ -648,6 +656,7 @@ namespace tpl {
     inline ThisThread::tid_t ThisThread::s_main_thread_id = get_native_id();
     #endif
     inline thread_local ThisThread::Priority ThisThread::s_priority = ThisThread::get_priority().value_or(Priority::normal);
+    inline thread_local std::size_t ThisThread::s_pool_id = std::numeric_limits<std::size_t>::max();
 
     inline static std::size_t hardware_max_parallism() noexcept {
         return std::max(hardware_cpu_info.active_cpus, hardware_cpu_info.active_cpus / hardware_cpu_info.logical_cpus / hardware_cpu_info.physical_cpus);

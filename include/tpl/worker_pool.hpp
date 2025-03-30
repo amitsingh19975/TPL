@@ -17,7 +17,7 @@ namespace tpl {
         ) : m_parent(schedular)
         {
             for (auto i = 0ul; i < nthreads; ++i) {
-                m_threads.emplace_back(&WorkerPool::do_work, this);
+                m_threads.emplace_back(&WorkerPool::do_work, this, i);
             }
         }
         WorkerPool(WorkerPool const&) = delete;
@@ -42,7 +42,7 @@ namespace tpl {
         internal::Waiter waiter;
     private:
         friend struct TaskToken;
-        void do_work();
+        void do_work(std::size_t thread_id);
     private:
         std::vector<thread_t> m_threads;
         std::atomic<bool> m_is_running{true};
