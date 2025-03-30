@@ -54,6 +54,10 @@ namespace tpl {
             assert(is_priority_set == true);
             m_fn(token);
         }
+
+        constexpr auto priority() const noexcept -> priority_t {
+            return m_priority;
+        }
     private:
         fn_t m_fn;
         priority_t m_priority{ priority_t::normal };

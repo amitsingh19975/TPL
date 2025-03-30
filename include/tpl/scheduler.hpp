@@ -3,6 +3,7 @@
 
 #include "signal_tree/tree.hpp"
 #include "task.hpp"
+#include "tpl/signal_tree/int.hpp"
 #include "tpl/thread.hpp"
 #include "waiter.hpp"
 #include "worker_pool.hpp"
@@ -36,7 +37,7 @@ namespace tpl {
     }
 
     struct Scheduler {
-        static constexpr std::size_t capacity = 128ul;
+        static constexpr std::size_t capacity = internal::NodeIntTraits::max_nodes;
         using signal_tree = SignalTree<capacity>;
 
         Scheduler()
