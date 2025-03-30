@@ -11,10 +11,12 @@
 #include "value_store.hpp"
 #include <algorithm>
 #include <atomic>
+#include <concepts>
 #include <cstdint>
 #include <limits>
 #include <memory>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 #include <span>
 #include "task_id.hpp"
@@ -415,5 +417,28 @@ namespace tpl {
     }
 
 } // namespace tpl
+
+template <typename Fn>
+    requires (std::invocable<Fn> || std::invocable<Fn, tpl::TaskToken&>)
+auto operator|(tpl::Scheduler& s, Fn&& fn) -> tpl::Scheduler::DependencyTracker {
+    return s.add_task(std::forward<Fn>(fn));
+}
+
+template <typename Fn>
+    requires (std::invocable<Fn> || std::invocable<Fn, tpl::TaskToken&>)
+auto operator|(tpl::Scheduler::DependencyTracker s, Fn&& fn) -> std::expected<tpl::Scheduler::DependencyTracker, tpl::SchedularError> {
+    auto task = s.parent->add_task(std::forward<Fn>(fn));
+    auto res = task.deps_on(s);
+    if (!res) return std::unexpected(res.error());
+    return task;
+}
+
+template <typename Fn>
+    requires (std::invocable<Fn> || std::invocable<Fn, tpl::TaskToken&>)
+auto operator|(std::expected<tpl::Scheduler::DependencyTracker, tpl::SchedularError> e, Fn&& fn) -> std::expected<tpl::Scheduler::DependencyTracker, tpl::SchedularError> {
+    if (!e) return std::unexpected(e.error());
+    auto s = *e;
+    return s | std::forward<Fn>(fn);
+}
 
 #endif // AMT_TPL_SCHEDULAR_HPP
