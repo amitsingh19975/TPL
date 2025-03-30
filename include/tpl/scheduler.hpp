@@ -261,6 +261,7 @@ namespace tpl {
         }
 
         auto run() -> std::expected<void, SchedularError> {
+            if (empty()) return {};
             m_last_processed_task.store(int_to_tid(std::numeric_limits<std::size_t>::max()));
             auto res = build();
             if (!res) return res;
