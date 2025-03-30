@@ -3,8 +3,8 @@
 
 #include "signal_tree/tree.hpp"
 #include "task.hpp"
-#include "tpl/signal_tree/int.hpp"
-#include "tpl/thread.hpp"
+#include "signal_tree/int.hpp"
+#include "thread.hpp"
 #include "waiter.hpp"
 #include "worker_pool.hpp"
 #include "task_token.hpp"
