@@ -18,7 +18,7 @@ namespace tpl::par {
             Range<R> r,
             Fn&& fn,
             auto&& dep_fn
-        ) -> std::expected<void, SchedularError> {
+        ) -> std::expected<void, SchedulerError> {
             auto items = (r.size() + Chunks - 1) / Chunks;
             for (auto i = 0ul; i < items; ++i) {
                 auto start = r.start + i * Chunks * r.stride;
@@ -57,7 +57,7 @@ namespace tpl::par {
             Acc acc,
             Fn&& fn,
             auto&& dep_fn
-        ) -> std::expected<Scheduler::DependencyTracker, SchedularError> {
+        ) -> std::expected<Scheduler::DependencyTracker, SchedulerError> {
             auto size = static_cast<std::size_t>(std::distance(b, e));
             auto items = (size + Chunks - 1) / Chunks;
 
@@ -124,7 +124,7 @@ namespace tpl::par {
         Range<R> r,
         Scheduler::DependencyTracker d,
         Fn&& fn
-    ) -> std::expected<void, SchedularError> {
+    ) -> std::expected<void, SchedulerError> {
         return internal::for_each<Chunks>(
             s,
             r,
@@ -143,7 +143,7 @@ namespace tpl::par {
         I e,
         Acc acc,
         Fn&& fn
-    ) -> std::expected<Scheduler::DependencyTracker, SchedularError> {
+    ) -> std::expected<Scheduler::DependencyTracker, SchedulerError> {
         return internal::reduce<Chunks>(s, b, e, acc, std::forward<Fn>(fn), [](auto) {});
     }
 
@@ -156,7 +156,7 @@ namespace tpl::par {
         Scheduler::DependencyTracker d,
         Acc acc,
         Fn&& fn
-    ) -> std::expected<Scheduler::DependencyTracker, SchedularError> {
+    ) -> std::expected<Scheduler::DependencyTracker, SchedulerError> {
         return internal::reduce<Chunks>(s, b, e, acc, std::forward<Fn>(fn), [d](auto t) {
             return t.deps_on(d);
         });

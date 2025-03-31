@@ -24,15 +24,15 @@
 
 namespace tpl {
 
-    enum class SchedularError {
+    enum class SchedulerError {
         no_root_task,
         cycle_found
     };
 
-    constexpr auto to_string(SchedularError e) noexcept -> std::string_view {
+    constexpr auto to_string(SchedulerError e) noexcept -> std::string_view {
         switch (e) {
-            case SchedularError::no_root_task: return "There must be a root task that does not depends on any other tasks.";
-            case SchedularError::cycle_found: return "Cycle detected";
+            case SchedulerError::no_root_task: return "There must be a root task that does not depends on any other tasks.";
+            case SchedulerError::cycle_found: return "Cycle detected";
         }
     }
 
@@ -162,7 +162,7 @@ namespace tpl {
             m_pool.waiter.notify_one();
         }
 
-        auto build() -> std::expected<void, SchedularError> {
+        auto build() -> std::expected<void, SchedulerError> {
             for (auto& t: m_trees) {
                 t.clear();
             }
@@ -204,7 +204,7 @@ namespace tpl {
             }
 
             if (empty()) {
-                return std::unexpected(SchedularError::no_root_task);
+                return std::unexpected(SchedulerError::no_root_task);
             }
             return {};
         }
@@ -216,11 +216,11 @@ namespace tpl {
 
             auto deps_on(
                 std::span<DependencyTracker> ids
-            ) -> std::expected<void, SchedularError>;
+            ) -> std::expected<void, SchedulerError>;
 
             template <typename... Ts>
                 requires ((std::same_as<Ts, DependencyTracker> && ...) && (sizeof...(Ts) > 0))
-            auto deps_on(Ts... ids) -> std::expected<void, SchedularError> {
+            auto deps_on(Ts... ids) -> std::expected<void, SchedulerError> {
                 std::array tmp { ids... };
                 return deps_on(tmp);
             }
@@ -260,8 +260,7 @@ namespace tpl {
             m_store.clear();
         }
 
-        auto run() -> std::expected<void, SchedularError> {
-            if (empty()) return {};
+        auto run() -> std::expected<void, SchedulerError> {
             m_last_processed_task.store(int_to_tid(std::numeric_limits<std::size_t>::max()));
             auto res = build();
             if (!res) return res;
@@ -360,11 +359,11 @@ namespace tpl {
 
     inline auto Scheduler::DependencyTracker::deps_on(
         std::span<DependencyTracker> ids
-    ) -> std::expected<void, SchedularError> {
+    ) -> std::expected<void, SchedulerError> {
         for ([[maybe_unused]] auto [child, p]: ids) {
             assert(p == parent);
             if (id == child) {
-                return std::unexpected(SchedularError::cycle_found);
+                return std::unexpected(SchedulerError::cycle_found);
             }
 
             auto cid = tid_to_int(child);
@@ -377,7 +376,7 @@ namespace tpl {
                 ds.push_back(id);
                 if (parent->detect_cycle(child)) {
                     ds.pop_back();
-                    return std::unexpected(SchedularError::cycle_found);
+                    return std::unexpected(SchedulerError::cycle_found);
                 }
                 auto& info = parent->m_info[tid_to_int(id)];
                 info.signals.fetch_add(1);
@@ -419,28 +418,5 @@ namespace tpl {
     }
 
 } // namespace tpl
-
-template <typename Fn>
-    requires (std::invocable<Fn> || std::invocable<Fn, tpl::TaskToken&>)
-auto operator|(tpl::Scheduler& s, Fn&& fn) -> tpl::Scheduler::DependencyTracker {
-    return s.add_task(std::forward<Fn>(fn));
-}
-
-template <typename Fn>
-    requires (std::invocable<Fn> || std::invocable<Fn, tpl::TaskToken&>)
-auto operator|(tpl::Scheduler::DependencyTracker s, Fn&& fn) -> std::expected<tpl::Scheduler::DependencyTracker, tpl::SchedularError> {
-    auto task = s.parent->add_task(std::forward<Fn>(fn));
-    auto res = task.deps_on(s);
-    if (!res) return std::unexpected(res.error());
-    return task;
-}
-
-template <typename Fn>
-    requires (std::invocable<Fn> || std::invocable<Fn, tpl::TaskToken&>)
-auto operator|(std::expected<tpl::Scheduler::DependencyTracker, tpl::SchedularError> e, Fn&& fn) -> std::expected<tpl::Scheduler::DependencyTracker, tpl::SchedularError> {
-    if (!e) return std::unexpected(e.error());
-    auto s = *e;
-    return s | std::forward<Fn>(fn);
-}
 
 #endif // AMT_TPL_SCHEDULAR_HPP

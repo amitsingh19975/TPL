@@ -17,7 +17,7 @@ namespace tpl {
         Task(Fn&& fn, priority_t p = priority_t::normal) noexcept
             : m_priority(p)
         {
-            m_fn = [fn = std::forward<Fn>(fn)](TaskToken& t) {
+            m_fn = [fn = std::forward<Fn>(fn)](TaskToken& t) noexcept {
                 if constexpr (std::invocable<Fn, TaskToken&>) {
                     using ret_t = decltype(std::invoke(fn, t));
                     if constexpr (!std::is_void_v<ret_t>) {
