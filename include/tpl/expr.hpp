@@ -3,7 +3,6 @@
 
 #include "scheduler.hpp"
 #include <concepts>
-#include <exception>
 #include <stdexcept>
 #include <type_traits>
 #include <utility>
