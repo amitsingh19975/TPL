@@ -14,7 +14,6 @@
 #include <atomic>
 #include <concepts>
 #include <cstdint>
-#include <exception>
 #include <limits>
 #include <memory>
 #include <unordered_set>
@@ -22,6 +21,10 @@
 #include <vector>
 #include <span>
 #include "task_id.hpp"
+
+#ifdef __cpp_exceptions
+    #include <exception>
+#endif
 
 namespace tpl {
 
@@ -66,8 +69,10 @@ namespace tpl {
             // the task from the queue.
             ErrorHandler error_handler;
 
-            // INFO: Unhandled exceptions
-            std::exception_ptr expception_ptr;
+            #ifdef __cpp_exceptions
+                // INFO: Unhandled exceptions
+                std::exception_ptr expception_ptr;
+            #endif
 
             // INFO: Dependencies to signal when this completes
             std::vector<TaskId> dep_signals{};
@@ -319,11 +324,13 @@ namespace tpl {
                 return m_tasks == 0 && m_pool.is_running();
             });
             m_is_running = false;
+            #ifdef __cpp_exceptions
             for (auto& t: m_info) {
                 if (t.expception_ptr) {
                     std::rethrow_exception(t.expception_ptr);
                 }
             }
+            #endif
             return {};
         }
 
@@ -458,6 +465,7 @@ namespace tpl {
                 m_parent.m_store,
                 info.inputs
             );
+            #ifdef __cpp_exceptions
             try {
                 info.task(token);
             } catch (std::exception const& e) {
@@ -473,6 +481,9 @@ namespace tpl {
                     }
                 }
             }
+            #else
+                info.task(token);
+            #endif
             switch (token.m_result) {
             case TaskResult::success: m_parent.on_complete(id, true); break;
             case TaskResult::failed: m_parent.on_failure(id); break;
