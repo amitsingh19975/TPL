@@ -14,6 +14,7 @@
 #include <atomic>
 #include <concepts>
 #include <cstdint>
+#include <exception>
 #include <limits>
 #include <memory>
 #include <unordered_set>
@@ -59,6 +60,12 @@ namespace tpl {
         };
         struct TaskInfo {
             Task task;
+
+            // INFO: It stores the exceptions that is thrown by task.
+            // If it returns true any pending action will run; otherwise, it'll outright remove
+            // the task from the queue.
+            ErrorHandler error_handler;
+
             // INFO: Dependencies to signal when this completes
             std::vector<TaskId> dep_signals{};
 
@@ -80,8 +87,9 @@ namespace tpl {
             alignas(atomic::internal::hardware_destructive_interference_size) std::atomic<int> signals{};
             alignas(atomic::internal::hardware_destructive_interference_size) std::atomic<TaskState> state{TaskState::empty};
 
-            TaskInfo(Task t) noexcept
+            TaskInfo(Task t, ErrorHandler h = ErrorHandler{}) noexcept
                 : task(std::move(t))
+                , error_handler(std::move(h))
                 , state(TaskState::alive)
             {}
 
@@ -89,7 +97,10 @@ namespace tpl {
             TaskInfo(TaskInfo const&) = delete;
             TaskInfo(TaskInfo && other) noexcept
                 : task(std::move(other.task))
+                , error_handler(std::move(other.error_handler))
                 , dep_signals(std::move(other.dep_signals))
+                , inputs(std::move(other.inputs))
+                , has_signaled(other.has_signaled)
                 , signals(other.signals.load())
                 , state(other.state.load())
             {}
@@ -98,6 +109,9 @@ namespace tpl {
                 if (this == &other) return *this;
                 using std::swap;
                 swap(task, other.task);
+                swap(inputs, other.inputs);
+                swap(has_signaled, other.has_signaled);
+                swap(error_handler, other.error_handler);
                 swap(dep_signals, other.dep_signals);
                 signals.store(other.signals.load());
                 state.store(other.state.load());
@@ -226,25 +240,47 @@ namespace tpl {
             }
         };
 
-        template <typename Fn>
-        constexpr auto add_task(
-            Fn&& fn,
-            Task::priority_t p = Task::priority_t::normal
+        auto add_task(
+            Task t,
+            ErrorHandler handler
         ) -> DependencyTracker {
             if (m_trees.size() * capacity > m_info.size()) resize_info(m_trees.size() * capacity);
 
             for (auto i = 0ul; i < m_info.size(); ++i) {
                 auto& info = m_info[i];
                 if (info.state == TaskState::alive) continue;
-                m_info[i] = TaskInfo(Task(std::forward<Fn>(fn), p));
+                m_info[i] = TaskInfo(std::move(t), std::move(handler));
                 return { .id = int_to_tid(i), .parent = this };
             }
 
             m_trees.push_back(signal_tree{});
             auto size = m_info.size();
             resize_info(m_trees.size() * capacity);
-            m_info[size] = TaskInfo(Task(std::forward<Fn>(fn), p));
+            m_info[size] = TaskInfo(std::move(t), std::move(handler));
             return { .id = int_to_tid(size), .parent = this };
+        }
+
+        template <typename Fn>
+        constexpr auto add_task(
+            Fn&& fn,
+            Task::priority_t p = Task::priority_t::normal
+        ) -> DependencyTracker {
+            return add_task(
+                Task(std::forward<Fn>(fn), p),
+                ErrorHandler()
+            );
+        }
+
+        template <typename Fn, typename EFn>
+        constexpr auto add_task(
+            Fn&& fn,
+            EFn&& e_fn,
+            Task::priority_t p = Task::priority_t::normal
+        ) -> DependencyTracker {
+            return add_task(
+                Task(std::forward<Fn>(fn), p),
+                ErrorHandler(std::forward<EFn>(e_fn))
+            );
         }
 
         auto empty() const noexcept -> bool {
@@ -406,7 +442,16 @@ namespace tpl {
                 m_parent.m_store,
                 info.inputs
             );
-            info.task(token);
+            try {
+                info.task(token);
+            } catch (std::exception const& e) {
+                auto should_continue = info.error_handler(e); 
+                if (!should_continue) {
+                    token.m_result = TaskResult::failed;
+                } else if (token.m_result == TaskResult::success) {
+                    token.m_result = TaskResult::failed;
+                }
+            }
             switch (token.m_result) {
             case TaskResult::success: m_parent.on_complete(id, true); break;
             case TaskResult::failed: m_parent.on_failure(id); break;
