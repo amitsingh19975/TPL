@@ -5,3 +5,4 @@
 #include "tpl/algorithm.hpp"
 #include "tpl/cow.hpp"
 #include "tpl/expr.hpp"
+#include "tpl/channel.hpp"
