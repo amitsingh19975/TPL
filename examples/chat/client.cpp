@@ -15,7 +15,6 @@
 #include <sys/wait.h>
 
 #include "tpl.hpp"
-#include "tpl/task_token.hpp"
 
 using namespace tpl;
 
@@ -76,16 +75,6 @@ int main() {
         fprintf(stderr, "[Client]: failed to connect\n");
         exit(3);
     }
-    /*{*/
-    /*    char s[INET6_ADDRSTRLEN + 1] = {0};*/
-    /*    inet_ntop(*/
-    /*        p->ai_family,*/
-    /*        get_in_addr(reinterpret_cast<struct sockaddr *>(p->ai_addr)),*/
-    /*        s,*/
-    /*        sizeof(s)*/
-    /*    );*/
-    /*    std::println("[Client]: connecting to {}", s);*/
-    /*}*/
 
     Scheduler s;
 
