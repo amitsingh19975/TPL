@@ -112,6 +112,7 @@ namespace tpl {
         template <typename T, unsigned N, typename Allocator = void>
             requires (maths::is_non_zero_power_of_two(N))
         struct CircularQueue {
+            using value_type = T;
             using int_t = atomic::Atomic::int_t;
             static constexpr bool is_small = sizeof(T) <= sizeof(int_t);
             using index_t = std::uint32_t;
@@ -292,6 +293,15 @@ namespace tpl {
             alignas(hardware_destructive_interference_size) std::atomic<index_t> m_write_index{};
             alignas(hardware_destructive_interference_size) std::atomic<index_t> m_read_index{};
         };
+
+        template <typename T>
+        struct is_bounded_queue: std::false_type{};
+
+        template <typename T, unsigned N, typename Allocator>
+        struct is_bounded_queue<CircularQueue<T, N, Allocator>>: std::true_type{};
+
+        template <typename T>
+        static constexpr auto is_bounded_queue_v = is_bounded_queue<std::decay_t<T>>::value;
     } // namespace internal
 
     template <typename T, unsigned N, typename Allocator = void>
@@ -300,6 +310,7 @@ namespace tpl {
     template <typename T, unsigned BlockSize = 128>
     struct Queue {
         static constexpr auto block_size = BlockSize;
+        using value_type = T;
         using size_type = std::size_t;
         using pointer = T*;
         using const_pointer = T const*;
@@ -467,6 +478,8 @@ namespace tpl {
             }
             return {};
         }
+
+        constexpr auto full() const noexcept { return false; }
 
     private:
         static constexpr auto node_scope(std::atomic<Node*> const& n, std::memory_order order, auto&& fn) noexcept -> void {
