@@ -124,6 +124,8 @@ namespace tpl {
                 m_waiter.wait([this] {
                     return !m_queue.empty() || m_closed.load(std::memory_order_acquire);
                 });
+
+                if (empty() && is_closed()) break;
             }
             return {};
         }
