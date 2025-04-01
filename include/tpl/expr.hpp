@@ -287,6 +287,42 @@ namespace tpl {
                 return eval(s, l(s), r(s), op);
             }
 
+            template <typename TL, typename TR>
+                requires (is_expr_v<TL> && is_task_fn<TR>)
+            auto eval(Scheduler& s, TL&& l, TR&& r, auto op) {
+                return eval(s, l(s), s.add_task(std::forward<TR>(r)), op);
+            }
+
+            template <typename TL, typename TR>
+                requires (is_dependency_v<TL> && is_task_fn<TR>)
+            auto eval(Scheduler& s, TL&& l, TR&& r, auto op) {
+                return eval(s, l, s.add_task(std::forward<TR>(r)), op);
+            }
+
+            template <typename TL, typename TR>
+                requires (is_task_group_result_v<TL> && is_task_fn<TR>)
+            auto eval(Scheduler& s, TL&& l, TR&& r, auto op) {
+                return eval(s, std::forward<TL>(l), s.add_task(std::forward<TR>(r)), op);
+            }
+
+            template <typename TL, typename TR>
+                requires (is_task_fn<TL> && is_dependency_v<TR>)
+            auto eval(Scheduler& s, TL&& l, TR&& r, auto op) {
+                return eval(s, s.add_task(l), r, op);
+            }
+
+            template <typename TL, typename TR>
+                requires (is_task_fn<TL> && is_expr_v<TR>)
+            auto eval(Scheduler& s, TL&& l, TR&& r, auto op) {
+                return eval(s, s.add_task(std::forward<TL>(l)), r(s), op);
+            }
+
+            template <typename TL, typename TR>
+                requires (is_task_fn<TL> && is_task_group_result_v<TR>)
+            auto eval(Scheduler& s, TL&& l, TR&& r, auto op) {
+                return eval(s, s.add_task(std::forward<TL>(l)), std::forward<TR>(r), op);
+            }
+
             template <typename TL, typename TR, typename O>
                 requires (is_dependency_v<TL> && is_dependency_v<TR>)
             auto eval(Scheduler&, TL&& l, TR&& r, O) {
@@ -298,38 +334,29 @@ namespace tpl {
             }
 
             template <typename TL, typename TR>
-                requires (is_task_fn<TL>)
-            auto eval(Scheduler& s, TL&& l, TR&& r, decltype(binary_parallel)) {
-                auto lr = s.add_task(std::forward<TL>(l));
-                if constexpr (is_expr_v<TR>) {
-                    return r(s);
-                } else if constexpr (is_task_group_result_v<TR>) {
-                    return r;
-                } else {
-                    return lr;
-                }
-            }
-
-            template <typename TL, typename TR>
-                requires (is_task_fn<TR>)
-            auto eval(Scheduler& s, TL&& l, TR&& r, decltype(binary_parallel)) {
-                if constexpr (is_expr_v<TL>) {
-                    [[maybe_unused]] auto lr = l(s);
-                }
-                return s.add_task(std::forward<TR>(r));
-            }
-
-            template <typename TL, typename TR>
-                requires (is_expr_v<TL> && is_dependency_v<TR>)
-            auto eval(Scheduler& s, TL&& l, TR&& r, decltype(binary_parallel)) {
-                [[maybe_unused]] auto lr = l(s);
+                requires (is_dependency_v<TL> && is_task_group_result_v<TR>)
+            auto eval(Scheduler&, TL&&, TR&& r, decltype(binary_parallel)) {
                 return r;
             }
 
             template <typename TL, typename TR>
-                requires (is_dependency_v<TL> && is_expr_v<TR>)
-            auto eval(Scheduler& s, TL&&, TR&& r, decltype(binary_parallel)) {
-                return r(s);
+                requires (is_task_group_result_v<TL> && is_dependency_v<TR>)
+            auto eval(Scheduler&, TL&&, TR&& r, decltype(binary_parallel)) {
+                return r;
+            }
+
+            template <typename TL, typename TR>
+                requires (is_dependency_v<TL> && is_task_group_result_v<TR>)
+            auto eval(Scheduler&, TL&& l, TR&& r, decltype(binary_sink)) {
+                r.deps_on(l);
+                return r;
+            }
+
+            template <typename TL, typename TR>
+                requires (is_task_group_result_v<TL> && is_dependency_v<TR>)
+            auto eval(Scheduler&, TL&& l, TR&& r, decltype(binary_sink)) {
+                l.required_by(r);
+                return r;
             }
 
             template <typename TL, typename TR>
@@ -344,57 +371,6 @@ namespace tpl {
             auto eval(Scheduler& s, TL&& l, TR&&, auto) {
                 if constexpr (is_expr_v<TL>) return l(s);
                 else return l;
-            }
-
-            // Sink
-            template <typename TL, typename TR>
-                requires (is_dependency_v<TL> && (is_expr_v<TR> || is_task_group_result_v<TR>))
-            auto eval(Scheduler& s, TL&& l, TR&& r, decltype(binary_sink) op) {
-                if constexpr (is_dependency_v<decltype(r)>) {
-                    auto res = r.deps_on(l);
-                    if (!res) throw SchedulerException(res.error());
-                    return r;
-                } else if constexpr (is_task_group_result_v<decltype(r)>) {
-                    // Fn > Group
-                    r.deps_on(l);
-                    return r;
-                } else {
-                    return eval(s, std::forward<TL>(l), r(s), op);
-                }
-            }
-
-            template <typename TL, typename TR>
-                requires ((is_expr_v<TL> || is_task_group_result_v<TL>) && is_dependency_v<TR>)
-            auto eval(Scheduler& s, TL&& l, TR&& r, decltype(binary_sink) op) {
-                if constexpr (is_dependency_v<decltype(l)>) {
-                    auto res = r.deps_on(l);
-                    if (!res) throw SchedulerException(res.error());
-                    return r;
-                } else if constexpr (is_task_group_result_v<decltype(l)>) {
-                    // G > F
-                    l.required_by(r);
-                    return r;
-                } else {
-                    return eval(s, l(s), std::forward<TR>(r), op);
-                }
-            }
-
-            template <typename TL, typename TR>
-                requires (is_expr_v<TL> && is_task_fn<TR>)
-            auto eval(Scheduler& s, TL&& l, TR&& r, decltype(binary_sink) op) {
-                return eval(s, std::forward<TL>(l), s.add_task(std::forward<TR>(r)), op);
-            }
-
-            template <typename TL, typename TR>
-                requires (is_task_fn<TL> && is_expr_v<TR>)
-            auto eval(Scheduler& s, TL&& l, TR&& r, decltype(binary_sink) op) {
-                return eval(s, s.add_task(std::forward<TL>(l)), std::forward<TR>(r), op);
-            }
-
-            template <typename TL, typename TR>
-                requires (is_task_fn<TL> && is_task_fn<TR>)
-            auto eval(Scheduler& s, TL&& l, TR&& r, decltype(binary_sink) op) {
-                return eval(s, s.add_task(std::forward<TL>(l)), s.add_task(std::forward<TR>(r)), op);
             }
 
             // Error
