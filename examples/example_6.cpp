@@ -11,7 +11,6 @@ int main() {
     bounded_channel_t<std::size_t, 64> ch;
     auto ts = s
         | [&ch] {
-            if (ch.is_closed()) return;
             for (auto i = 0ul; i < 100; ++i) {
                 auto res = ch.send(i);
                 if (!res) {
@@ -22,7 +21,6 @@ int main() {
             ch.close();
         }
         | [&ch] {
-            if (ch.is_closed()) return;
             for (auto i = 0ul; i < 100; ++i) {
                 auto res = ch.send(i + 100);
                 if (!res) {
