@@ -10,14 +10,12 @@
 namespace tpl {
 
     enum class ChannelError {
-        closed,
-        empty
+        closed
     };
 
     constexpr auto to_string(ChannelError e) noexcept -> std::string_view {
         switch (e) {
             case ChannelError::closed: return "Channel is closed";
-            case ChannelError::empty: return "Channel is empty";
         }
     }
 
@@ -112,9 +110,7 @@ namespace tpl {
         }
 
         auto try_receive() -> std::optional<value_type> {
-            auto tmp = m_queue.pop();
-            if (!tmp) return std::unexpected(ChannelError::empty);
-            return { std::move(tmp) };
+            return m_queue.pop();
         }
 
         auto receive() -> std::optional<value_type> {
