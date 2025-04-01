@@ -11,3 +11,5 @@ add_exec("example_4.cpp" example_4)
 add_exec("example_5.cpp" example_5)
 add_exec("example_6.cpp" example_6)
 add_exec("throughput_test.cpp" throughput_test)
+
+add_subdirectory(chat)
