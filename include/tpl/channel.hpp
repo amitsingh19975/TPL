@@ -27,19 +27,12 @@ namespace tpl {
         using size_type = std::size_t;
         using value_type = typename base_type::value_type;
 
-        BasicChannel() noexcept requires (!internal::is_bounded_queue_v<base_type>) = default;
+        BasicChannel() noexcept = default;
         BasicChannel(BasicChannel const&) noexcept = delete;
         BasicChannel(BasicChannel &&) noexcept = delete;
         BasicChannel& operator=(BasicChannel const&) noexcept = delete;
         BasicChannel& operator=(BasicChannel &&) noexcept = delete;
-        ~BasicChannel() {
-            if (m_alloc) delete m_alloc;
-        }
-
-        BasicChannel() requires (internal::is_bounded_queue_v<base_type>)
-            : m_alloc(new BlockAllocator())
-            , m_queue(m_alloc)
-        {}
+        ~BasicChannel() = default;
 
         constexpr auto size() const noexcept -> size_type {
             return m_queue.size();
@@ -149,14 +142,13 @@ namespace tpl {
         }
 
     private:
-        BlockAllocator* m_alloc{nullptr};
         base_type m_queue;
         std::atomic<bool> m_closed{false};
         internal::Waiter m_waiter;
     };
 
     template <typename T, std::size_t N>
-    using bounded_channel_t = BasicChannel<BoundedQueue<T, N, BlockAllocator>>;
+    using bounded_channel_t = BasicChannel<BoundedQueue<T, N>>;
 
     template <typename T, std::size_t BlockSize = 256>
     using channel_t = BasicChannel<Queue<T, BlockSize>>;

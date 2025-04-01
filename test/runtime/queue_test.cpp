@@ -85,14 +85,15 @@ TEST_CASE("Thread Safe Queue", "[queue]" ) {
     }
 
     GIVEN("A queue") {
-        auto q = Queue<std::pair<std::size_t, int>>{};
+        using type = std::pair<std::size_t, int>;
+        auto q = Queue<type*>{};
         REQUIRE(q.nodes() == 0);
         REQUIRE(q.empty() == true);
         std::atomic<int> finshed{0};
 
         auto fn = [&q, &finshed](std::size_t id, int size) {
             for (auto i = 0; i < size; ++i) {
-                q.emplace(id, i);
+                q.push(new type(id, i));
                 std::this_thread::sleep_for(std::chrono::milliseconds(rand() % 10));
             }
             finshed.fetch_add(1);
@@ -114,7 +115,8 @@ TEST_CASE("Thread Safe Queue", "[queue]" ) {
             while (!q.empty()) {
                 auto tmp = q.pop();
                 if (!tmp) break;
-                auto [id, i] = *tmp;
+                auto [id, i] = *tmp.value();
+                delete *tmp;
                 flags[id][i] = true;
                 ++count;
             }

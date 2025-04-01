@@ -109,25 +109,18 @@ namespace tpl {
         struct alignas(N) aligned_type : public T {};
 
         // https://github.com/erez-strauss/lockfree_mpmc_queue/blob/master/mpmc_queue.h
-        template <typename T, unsigned N, typename Allocator = void>
-            requires (maths::is_non_zero_power_of_two(N))
+        template <typename T, unsigned N>
+            requires (maths::is_non_zero_power_of_two(N) && (sizeof(T) <= sizeof(atomic::Atomic::int_t)))
         struct CircularQueue {
             using value_type = T;
             using int_t = atomic::Atomic::int_t;
-            static constexpr bool is_small = sizeof(T) <= sizeof(int_t);
             using index_t = std::uint32_t;
-            using value_t = std::conditional_t<
-                is_small,
-                int_t,
-                T*
-            >;
+            using value_t = int_t;
             using entry_t = QueueEntry<value_t, index_t>;
             using base_type = StaticCircularArray<aligned_type<entry_t, hardware_destructive_interference_size>, N>;
             using size_type = typename base_type::size_type;
 
-            constexpr CircularQueue() noexcept requires (std::is_void_v<Allocator>)
-                : m_allocator(nullptr)
-            {
+            constexpr CircularQueue() noexcept {
                 for (auto i = 0u; i < m_data.size(); ++i) m_data[i].set_seq(index_t(i << 1));
             }
             constexpr CircularQueue(CircularQueue const&) noexcept = delete;
@@ -136,12 +129,6 @@ namespace tpl {
             constexpr CircularQueue& operator=(CircularQueue &&) noexcept = delete;
             ~CircularQueue() noexcept {
                 clear();
-            }
-
-            constexpr CircularQueue(BlockAllocator* alloc) noexcept requires (!std::is_void_v<Allocator>)
-                : m_allocator(alloc)
-            {
-                for (auto i = 0u; i < m_data.size(); ++i) m_data[i].set_seq(index_t(i << 1));
             }
 
             constexpr auto size() const noexcept -> size_type {
@@ -195,14 +182,8 @@ namespace tpl {
                                 std::memory_order_relaxed
                             );
                             value_t ptr = data_entry.get_value();
-                            if constexpr (!is_small) {
-                                auto val = std::move(*ptr);
-                                m_allocator->dealloc(ptr);
-                                return std::move(val);
-                            } else {
-                                auto item = static_cast<typename internal::storage_value<sizeof(T)>::type>(ptr);
-                                return { std::move(std::bit_cast<T>(item)) };
-                            }
+                            auto item = static_cast<typename internal::storage_value<sizeof(T)>::type>(ptr);
+                            return { std::move(std::bit_cast<T>(item)) };
                         }
                     } else if ((sq | 1) == (old_idx | 1)) {
                         m_read_index.compare_exchange_strong(
@@ -218,34 +199,13 @@ namespace tpl {
             }
 
             template <typename... Args>
-            TPL_ATOMIC_FUNC_ATTR auto emplace(Args&&... args) noexcept(std::is_nothrow_constructible_v<T, Args...>) -> bool requires (!std::is_void_v<Allocator>) {
-                if constexpr (!is_small) {
-                    auto mem = m_allocator->template alloc<T>();
-                    new (mem) T(std::forward<Args>(args)...);
-                    return push_value(mem);
-                } else {
-                    return push(T(std::forward<Args>(args)...));
-                }
+            TPL_ATOMIC_FUNC_ATTR auto emplace(Args&&... args) noexcept(std::is_nothrow_constructible_v<T, Args...>) -> bool {
+                return push(T(std::forward<Args>(args)...));
             }
 
-            TPL_ATOMIC_FUNC_ATTR auto push(T val) noexcept(std::is_nothrow_move_constructible_v<T>) -> bool requires (std::is_move_constructible_v<T> && !std::is_void_v<Allocator>) {
-                if constexpr (!is_small) {
-                    auto mem = m_allocator->template alloc<T>();
-                    new (mem) T(std::move(val));
-                    return push_value(mem);
-                } else {
-                    auto item = std::bit_cast<typename internal::storage_value<sizeof(T)>::type>(val);
-                    return push_value(static_cast<int_t>(item));
-                }
-            }
-
-            TPL_ATOMIC_FUNC_ATTR auto push_value(T* val) noexcept -> bool requires (!std::same_as<T, value_t> && is_small) {
-                union {
-                    T* o;
-                    int_t n;
-                } tmp;
-                tmp.o = val;
-                return push_value(tmp.n);
+            TPL_ATOMIC_FUNC_ATTR auto push(T val) noexcept(std::is_nothrow_move_constructible_v<T>) -> bool requires (std::is_move_constructible_v<T>) {
+                auto item = std::bit_cast<typename internal::storage_value<sizeof(T)>::type>(val);
+                return push_value(static_cast<value_t>(item));
             }
 
             TPL_ATOMIC_FUNC_ATTR auto push_value(value_t val) noexcept -> bool {
@@ -289,7 +249,6 @@ namespace tpl {
 
         private:
             base_type m_data;
-            Allocator* m_allocator{nullptr};
             alignas(hardware_destructive_interference_size) std::atomic<index_t> m_write_index{};
             alignas(hardware_destructive_interference_size) std::atomic<index_t> m_read_index{};
         };
@@ -297,17 +256,18 @@ namespace tpl {
         template <typename T>
         struct is_bounded_queue: std::false_type{};
 
-        template <typename T, unsigned N, typename Allocator>
-        struct is_bounded_queue<CircularQueue<T, N, Allocator>>: std::true_type{};
+        template <typename T, unsigned N>
+        struct is_bounded_queue<CircularQueue<T, N>>: std::true_type{};
 
         template <typename T>
         static constexpr auto is_bounded_queue_v = is_bounded_queue<std::decay_t<T>>::value;
     } // namespace internal
 
-    template <typename T, unsigned N, typename Allocator = void>
-    using BoundedQueue = internal::CircularQueue<T, N, Allocator>;
+    template <typename T, unsigned N>
+    using BoundedQueue = internal::CircularQueue<T, N>;
 
     template <typename T, unsigned BlockSize = 128>
+        requires (sizeof(T) <= sizeof(atomic::Atomic::int_t))
     struct Queue {
         static constexpr auto block_size = BlockSize;
         using value_type = T;
@@ -315,14 +275,10 @@ namespace tpl {
         using pointer = T*;
         using const_pointer = T const*;
     private:
-        using node_inner_t = BoundedQueue<atomic::Atomic::int_t, BlockSize, BlockAllocator>;
+        using node_inner_t = BoundedQueue<atomic::Atomic::int_t, BlockSize>;
         struct Node {
             node_inner_t q;
             alignas(internal::hardware_destructive_interference_size) std::atomic<Node*> next{};
-
-            constexpr Node(BlockAllocator* alloc) noexcept
-                : q(alloc)
-            {}
         };
     public:
         constexpr Queue() noexcept = default;
@@ -371,7 +327,6 @@ namespace tpl {
             m_tail = nullptr;
             m_head = nullptr;
             m_node_allocator.reset();
-            m_data_allocator.reset();
         }
 
         template <typename... Args>
@@ -380,20 +335,8 @@ namespace tpl {
         }
 
         TPL_ATOMIC_FUNC_ATTR auto push(T val) -> bool requires (!std::same_as<T, typename node_inner_t::value_t>) {
-            if constexpr (sizeof(T) <= sizeof(atomic::Atomic::int_t)) {
-                auto item = std::bit_cast<typename internal::storage_value<sizeof(T)>::type>(val);
-                return push(static_cast<node_inner_t::value_t>(item));
-            } else {
-                T* tmp = m_data_allocator.alloc<T>();
-                if (!tmp) return false;
-                new (tmp) T(std::move(val));
-                if (!push(reinterpret_cast<node_inner_t::value_t>(tmp))) {
-                    tmp->~T();
-                    m_data_allocator.dealloc(tmp);
-                    return false;
-                }
-                return true;
-            }
+            auto item = std::bit_cast<typename internal::storage_value<sizeof(T)>::type>(val);
+            return push(static_cast<node_inner_t::value_t>(item));
         }
 
         TPL_ATOMIC_FUNC_ATTR auto push(node_inner_t::value_t val) -> bool {
@@ -413,7 +356,7 @@ namespace tpl {
                     node = m_free_nodes.pop().value_or(nullptr);
                     if (!node) {
                         node = m_node_allocator.alloc<Node>();
-                        new(node) Node(&m_data_allocator);
+                        new(node) Node();
                     } else {
                         node->next = nullptr;
                     }
@@ -454,16 +397,8 @@ namespace tpl {
 
                 if (tmp) {
                     auto node_value = *tmp;
-                    if constexpr (sizeof(T) <= sizeof(atomic::Atomic::int_t)) {
-                        auto item = static_cast<typename internal::storage_value<sizeof(T)>::type>(node_value);
-                        return std::move(std::bit_cast<T>(item));
-                    } else {
-                        auto node = std::bit_cast<T*>(node_value);
-                        auto val = std::move(*node);
-                        node->~T();
-                        m_data_allocator.dealloc(node);
-                        return std::move(val);
-                    }
+                    auto item = static_cast<typename internal::storage_value<sizeof(T)>::type>(node_value);
+                    return std::move(std::bit_cast<T>(item));
                 }
 
                 Node* next = tail->next.load(std::memory_order_acquire);
@@ -499,13 +434,12 @@ namespace tpl {
                 m_node_allocator.dealloc(tmp);
             }
         }
-        using free_queue_t = BoundedQueue<Node*, BlockSize, BlockAllocator>;
+        using free_queue_t = BoundedQueue<Node*, BlockSize>;
     private:
         alignas(internal::hardware_destructive_interference_size) std::atomic<Node*> m_head{};
         alignas(internal::hardware_destructive_interference_size) std::atomic<Node*> m_tail{};
-        BlockAllocator m_data_allocator;
         BlockAllocator m_node_allocator;
-        free_queue_t m_free_nodes{&m_node_allocator};
+        free_queue_t m_free_nodes;
     };
 } // namespace tpl
 
