@@ -66,6 +66,9 @@ namespace tpl {
             // the task from the queue.
             ErrorHandler error_handler;
 
+            // INFO: Unhandled exceptions
+            std::exception_ptr expception_ptr;
+
             // INFO: Dependencies to signal when this completes
             std::vector<TaskId> dep_signals{};
 
@@ -316,6 +319,11 @@ namespace tpl {
                 return m_tasks == 0 && m_pool.is_running();
             });
             m_is_running = false;
+            for (auto& t: m_info) {
+                if (t.expception_ptr) {
+                    std::rethrow_exception(t.expception_ptr);
+                }
+            }
             return {};
         }
 
@@ -453,11 +461,16 @@ namespace tpl {
             try {
                 info.task(token);
             } catch (std::exception const& e) {
-                auto should_continue = info.error_handler(e); 
-                if (!should_continue) {
+                if (!info.error_handler) {
+                    info.expception_ptr = std::current_exception();
                     token.m_result = TaskResult::failed;
-                } else if (token.m_result == TaskResult::success) {
-                    token.m_result = TaskResult::failed;
+                } else {
+                    auto should_continue = info.error_handler(e); 
+                    if (!should_continue) {
+                        token.m_result = TaskResult::failed;
+                    } else if (token.m_result == TaskResult::success) {
+                        token.m_result = TaskResult::failed;
+                    }
                 }
             }
             switch (token.m_result) {
