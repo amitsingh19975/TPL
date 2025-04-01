@@ -16,6 +16,10 @@ namespace tpl {
         using fn_t = std::function<void(TaskToken&)>;
 
         template <typename Fn>
+            requires (
+                std::invocable<Fn> ||
+                std::invocable<Fn, TaskToken&>
+            )
         explicit Task(Fn&& fn, priority_t p = priority_t::normal) noexcept
             : m_priority(p)
         {
@@ -68,9 +72,9 @@ namespace tpl {
 
     struct ErrorHandler {
         ErrorHandler() noexcept = default;
-        ErrorHandler(ErrorHandler const&) noexcept = delete;
+        ErrorHandler(ErrorHandler const&) noexcept = default;
         ErrorHandler(ErrorHandler &&) noexcept = default;
-        ErrorHandler& operator=(ErrorHandler const&) noexcept = delete;
+        ErrorHandler& operator=(ErrorHandler const&) noexcept = default;
         ErrorHandler& operator=(ErrorHandler &&) noexcept = default;
         ~ErrorHandler() noexcept = default;
 

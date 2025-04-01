@@ -2,12 +2,20 @@
 #define AMT_TPL_EXPR_HPP
 
 #include "scheduler.hpp"
+#include "tpl/task.hpp"
 #include <concepts>
 #include <stdexcept>
 #include <type_traits>
 #include <utility>
 
 namespace tpl {
+
+    struct SchedulerException: std::runtime_error {
+        SchedulerError e;
+        SchedulerException(SchedulerError e)
+            : std::runtime_error(std::format("Schedule Error: {}", to_string(e)))
+        {}
+    };
 
     namespace internal {
         struct SchedulerExpr;
@@ -68,12 +76,6 @@ namespace tpl {
             >
         {};
 
-        struct SchedulerException: std::runtime_error {
-            SchedulerError e;
-            SchedulerException(SchedulerError e)
-                : std::runtime_error(std::format("Schedule Error: {}", to_string(e)))
-            {}
-        };
 
         template <std::size_t N>
         struct TaskGroupResult {
@@ -116,6 +118,13 @@ namespace tpl {
                     }
                 }
             }
+
+            auto set_error_handler(ErrorHandler handler) {
+                for (auto i = 0ul; i < data.size() - 1; ++i) {
+                    data[i].set_error_handler(handler);
+                }
+                data.back().set_error_handler(std::move(handler));
+            }
         };
 
         template <typename T>
@@ -134,9 +143,9 @@ namespace tpl {
             using child_t = C;
 
             constexpr Expr() noexcept = default;
-            constexpr Expr(Expr const&) noexcept = default;
+            constexpr Expr(Expr const&) noexcept = delete;
             constexpr Expr(Expr &&) noexcept = default;
-            constexpr Expr& operator=(Expr const&) noexcept = default;
+            constexpr Expr& operator=(Expr const&) noexcept = delete;
             constexpr Expr& operator=(Expr &&) noexcept = default;
             constexpr ~Expr() noexcept = default;
 
@@ -183,9 +192,7 @@ namespace tpl {
                 return s; 
             }
 
-            auto operator()() -> Scheduler* {
-                return s;
-            }
+            auto operator()() {}
         };
 
     } // namespace internal
@@ -228,13 +235,14 @@ namespace tpl {
         struct is_expr<TaskGroup<Ts...>>: std::true_type {};
 
         template <typename Fn>
-        static constexpr auto is_task_fn = !is_expr<Fn>::value && (std::invocable<Fn> || std::invocable<Fn, TaskToken&>);
+        static constexpr auto is_task_fn = !is_expr<Fn>::value && (std::invocable<Fn> || std::invocable<Fn, TaskToken&>) && !std::same_as<std::decay_t<Fn>, SchedulerExpr>;
 
         template <std::size_t I>
         struct BinaryOp: std::integral_constant<std::size_t, I> {};
 
-        static constexpr auto binary_or = BinaryOp<0>{}; // '|'
-        static constexpr auto binary_gt = BinaryOp<1>{}; // '>'
+        static constexpr auto binary_parallel = BinaryOp<0>{}; // '|'
+        static constexpr auto binary_sink = BinaryOp<1>{}; // '>'
+        static constexpr auto binary_error = BinaryOp<2>{}; // '>'
 
         template <typename L, typename R, typename Op>
         struct BinaryExpr: Expr<BinaryExpr<L, R, Op>> {
@@ -251,73 +259,22 @@ namespace tpl {
                 else return rhs.get_scheduler();
             }
 
-            auto operator()(Scheduler& s) requires (binary_or.value == Op::value) {
-                if constexpr (is_scheduler_v<L>) {
-                    if constexpr (is_task_fn<R>) {
-                        return s.add_task(std::move(rhs));
-                    } else if constexpr (is_expr_v<R>) {
-                        return rhs(s);
-                    } else {
-                        return rhs;
-                    }
-                } else if constexpr (is_scheduler_v<R>) {
-                    if constexpr (is_task_fn<L>) {
-                        return s.add_task(std::move(lhs));
-                    } else if constexpr (is_expr_v<L>) {
-                        return lhs(s);
-                    } else {
-                        return lhs;
-                    }
-                } else {
-                    if constexpr (is_task_fn<L>) {
-                        s.add_task(std::move(lhs));
-                        if constexpr (is_task_fn<R>) {
-                            return s.add_task(std::move(rhs));
-                        } else if constexpr (is_expr_v<R>) {
-                            return rhs(s);
-                        } else {
-                            return rhs;
-                        }
-                    } else if constexpr (is_task_fn<R>) {
-                        if constexpr (is_task_fn<L>) {
-                            s.add_task(std::move(lhs));
-                            return s.add_task(std::move(rhs));
-                        } else if constexpr (is_expr_v<L>) {
-                            [[maybe_unused]] auto res = lhs(s);
-                            return s.add_task(std::move(rhs));
-                        } else {
-                            return s.add_task(std::move(rhs));
-                        }
-                    } else if constexpr (is_expr_v<L>) {
-                        [[maybe_unused]] auto lr = lhs(s);
-                        if constexpr (is_task_fn<R>) {
-                            return s.add_task(std::move(rhs));
-                        } else if constexpr (is_expr_v<R>) {
-                            return rhs(s);
-                        } else {
-                            return rhs;
-                        }
-                    } else if constexpr (is_expr<R>::value) {
-                        if constexpr (is_task_fn<L>) {
-                            s.add_task(std::move(lhs));
-                            return rhs(s);
-                        } else if constexpr (is_expr_v<L>) {
-                            auto res = lhs(s);
-                            return rhs(s);
-                        } else {
-                            return rhs(s);
-                        }
-                    } else {
-                        return rhs;
-                    }
-                }
+            auto operator()(Scheduler& s) requires (binary_parallel.value == Op::value) {
+                return eval(s, std::move(lhs), std::move(rhs), binary_parallel);
             }
 
-            auto operator()(Scheduler& s) requires (binary_gt.value == Op::value) {
+            auto operator()(Scheduler& s) requires (binary_sink.value == Op::value) {
                 static_assert(
                     !(is_scheduler_v<L> || is_scheduler_v<R>)
                 );
-                return eval(s, std::move(lhs), std::move(rhs), binary_gt);
+                return eval(s, std::move(lhs), std::move(rhs), binary_sink);
+            }
+
+            auto operator()(Scheduler& s) requires (binary_error.value == Op::value) {
+                static_assert(
+                    !(is_scheduler_v<L> || is_scheduler_v<R>)
+                );
+                return eval(s, std::move(lhs), std::move(rhs), binary_error);
             }
 
             lhs_t lhs;
@@ -325,8 +282,74 @@ namespace tpl {
 
         private:
             template <typename TL, typename TR>
+                requires (is_expr_v<TL> && is_expr_v<TR>)
+            auto eval(Scheduler& s, TL&& l, TR&& r, auto op) {
+                return eval(s, l(s), r(s), op);
+            }
+
+            template <typename TL, typename TR, typename O>
+                requires (is_dependency_v<TL> && is_dependency_v<TR>)
+            auto eval(Scheduler&, TL&& l, TR&& r, O) {
+                if constexpr (O::value == binary_sink.value) {
+                    auto res = l.deps_on(r);
+                    if (!res) throw SchedulerException(res.error());
+                }
+                return r;
+            }
+
+            template <typename TL, typename TR>
+                requires (is_task_fn<TL>)
+            auto eval(Scheduler& s, TL&& l, TR&& r, decltype(binary_parallel)) {
+                auto lr = s.add_task(std::forward<TL>(l));
+                if constexpr (is_expr_v<TR>) {
+                    return r(s);
+                } else if constexpr (is_task_group_result_v<TR>) {
+                    return r;
+                } else {
+                    return lr;
+                }
+            }
+
+            template <typename TL, typename TR>
+                requires (is_task_fn<TR>)
+            auto eval(Scheduler& s, TL&& l, TR&& r, decltype(binary_parallel)) {
+                if constexpr (is_expr_v<TL>) {
+                    [[maybe_unused]] auto lr = l(s);
+                }
+                return s.add_task(std::forward<TR>(r));
+            }
+
+            template <typename TL, typename TR>
+                requires (is_expr_v<TL> && is_dependency_v<TR>)
+            auto eval(Scheduler& s, TL&& l, TR&& r, decltype(binary_parallel)) {
+                [[maybe_unused]] auto lr = l(s);
+                return r;
+            }
+
+            template <typename TL, typename TR>
+                requires (is_dependency_v<TL> && is_expr_v<TR>)
+            auto eval(Scheduler& s, TL&&, TR&& r, decltype(binary_parallel)) {
+                return r(s);
+            }
+
+            template <typename TL, typename TR>
+                requires (std::same_as<std::decay_t<TL>, SchedulerExpr>)
+            auto eval(Scheduler& s, TL&&, TR&& r, auto) {
+                if constexpr (is_expr_v<TR>) return r(s);
+                else return r;
+            }
+
+            template <typename TL, typename TR>
+                requires (std::same_as<std::decay_t<TR>, SchedulerExpr>)
+            auto eval(Scheduler& s, TL&& l, TR&&, auto) {
+                if constexpr (is_expr_v<TL>) return l(s);
+                else return l;
+            }
+
+            // Sink
+            template <typename TL, typename TR>
                 requires (is_dependency_v<TL> && (is_expr_v<TR> || is_task_group_result_v<TR>))
-            auto eval(Scheduler& s, TL&& l, TR&& r, decltype(binary_gt) op) {
+            auto eval(Scheduler& s, TL&& l, TR&& r, decltype(binary_sink) op) {
                 if constexpr (is_dependency_v<decltype(r)>) {
                     auto res = r.deps_on(l);
                     if (!res) throw SchedulerException(res.error());
@@ -342,7 +365,7 @@ namespace tpl {
 
             template <typename TL, typename TR>
                 requires ((is_expr_v<TL> || is_task_group_result_v<TL>) && is_dependency_v<TR>)
-            auto eval(Scheduler& s, TL&& l, TR&& r, decltype(binary_gt) op) {
+            auto eval(Scheduler& s, TL&& l, TR&& r, decltype(binary_sink) op) {
                 if constexpr (is_dependency_v<decltype(l)>) {
                     auto res = r.deps_on(l);
                     if (!res) throw SchedulerException(res.error());
@@ -358,20 +381,47 @@ namespace tpl {
 
             template <typename TL, typename TR>
                 requires (is_expr_v<TL> && is_task_fn<TR>)
-            auto eval(Scheduler& s, TL&& l, TR&& r, decltype(binary_gt) op) {
+            auto eval(Scheduler& s, TL&& l, TR&& r, decltype(binary_sink) op) {
                 return eval(s, std::forward<TL>(l), s.add_task(std::forward<TR>(r)), op);
             }
 
             template <typename TL, typename TR>
                 requires (is_task_fn<TL> && is_expr_v<TR>)
-            auto eval(Scheduler& s, TL&& l, TR&& r, decltype(binary_gt) op) {
+            auto eval(Scheduler& s, TL&& l, TR&& r, decltype(binary_sink) op) {
                 return eval(s, s.add_task(std::forward<TL>(l)), std::forward<TR>(r), op);
             }
 
             template <typename TL, typename TR>
                 requires (is_task_fn<TL> && is_task_fn<TR>)
-            auto eval(Scheduler& s, TL&& l, TR&& r, decltype(binary_gt) op) {
+            auto eval(Scheduler& s, TL&& l, TR&& r, decltype(binary_sink) op) {
                 return eval(s, s.add_task(std::forward<TL>(l)), s.add_task(std::forward<TR>(r)), op);
+            }
+
+            // Error
+            template <typename TL, typename TR>
+                requires (is_dependency_v<TL> && std::same_as<std::decay_t<TR>, ErrorHandler>)
+            auto eval(Scheduler&, TL&& l, TR&& r, decltype(binary_error)) {
+                l.set_error_handler(std::forward<TR>(r));
+                return l;
+            }
+
+            template <typename TL, typename TR>
+                requires (is_task_fn<TL> && std::same_as<std::decay_t<TR>, ErrorHandler>)
+            auto eval(Scheduler& s, TL&& l, TR&& r, decltype(binary_error)) {
+                return s.add_task(std::forward<TL>(l), std::forward<TR>(r));
+            }
+
+            template <typename TL, typename TR>
+                requires (is_expr_v<TL> && std::same_as<std::decay_t<TR>, ErrorHandler>)
+            auto eval(Scheduler& s, TL&& l, TR&& r, decltype(binary_error) op) {
+                return eval(s, l(s), std::forward<TR>(r), op);
+            }
+
+            template <typename TL, typename TR>
+                requires (is_task_group_result_v<TL> && std::same_as<std::decay_t<TR>, ErrorHandler>)
+            auto eval(Scheduler&, TL&& l, TR&& r, decltype(binary_error)) {
+                l.set_error_handler(std::forward<TR>(r));
+                return l;
             }
         };
 
@@ -408,7 +458,7 @@ static inline constexpr auto operator|(tpl::Scheduler& s, Fn&& fn) noexcept {
     return tpl::internal::BinaryExpr(
         tpl::internal::SchedulerExpr{ .s = &s },
         std::forward<Fn>(fn),
-        tpl::internal::binary_or
+        tpl::internal::binary_parallel
     );
 }
 
@@ -418,7 +468,7 @@ static inline constexpr auto operator|(tpl::Scheduler& s, T&& e) noexcept {
     return tpl::internal::BinaryExpr(
         tpl::internal::SchedulerExpr{ .s = &s },
         std::forward<T>(e),
-        tpl::internal::binary_or
+        tpl::internal::binary_parallel
     );
 }
 
@@ -428,7 +478,7 @@ static inline constexpr auto operator|(L&& l, R&& r) noexcept {
     return tpl::internal::BinaryExpr(
         std::forward<L>(l),
         std::forward<R>(r),
-        tpl::internal::binary_or
+        tpl::internal::binary_parallel
     );
 }
 
@@ -438,7 +488,7 @@ static inline constexpr auto operator|(L&& l, R&& r) noexcept {
     return tpl::internal::BinaryExpr(
         std::forward<L>(l),
         std::forward<R>(r),
-        tpl::internal::binary_or
+        tpl::internal::binary_parallel
     );
 }
 
@@ -448,7 +498,28 @@ static inline constexpr auto operator|(L&& l, R&& r) noexcept {
     return tpl::internal::BinaryExpr(
         std::forward<L>(l),
         std::forward<R>(r),
-        tpl::internal::binary_or
+        tpl::internal::binary_parallel
+    );
+}
+
+// Error handler
+template <typename L, typename R>
+    requires (tpl::internal::is_task_fn<L> && std::same_as<tpl::ErrorHandler, std::decay_t<R>>)
+static inline constexpr auto operator+(L&& l, R&& r) noexcept {
+    return tpl::internal::BinaryExpr(
+        std::forward<L>(l),
+        std::forward<R>(r),
+        tpl::internal::binary_error
+    );
+}
+
+template <typename L, typename R>
+    requires (tpl::internal::is_expr_v<L> && std::same_as<tpl::ErrorHandler, std::decay_t<R>>)
+static inline constexpr auto operator+(L&& l, R&& r) noexcept {
+    return tpl::internal::BinaryExpr(
+        std::forward<L>(l),
+        std::forward<R>(r),
+        tpl::internal::binary_error
     );
 }
 
@@ -459,7 +530,7 @@ static inline constexpr auto operator>(tpl::internal::BinaryExpr<L, R, O> expr, 
     return tpl::internal::BinaryExpr(
         expr,
         std::forward<T>(g),
-        tpl::internal::binary_gt
+        tpl::internal::binary_sink
     );
 }
 
@@ -469,7 +540,7 @@ static inline constexpr auto operator>(L&& l, R&& r) noexcept {
     return tpl::internal::BinaryExpr(
         std::forward<L>(l),
         std::forward<R>(r),
-        tpl::internal::binary_gt
+        tpl::internal::binary_sink
     );
 }
 
@@ -479,7 +550,7 @@ static inline constexpr auto operator>(L&& l, R&& r) noexcept {
     return tpl::internal::BinaryExpr(
         std::forward<L>(l),
         std::forward<R>(r),
-        tpl::internal::binary_gt
+        tpl::internal::binary_sink
     );
 }
 
@@ -489,7 +560,7 @@ static inline constexpr auto operator>(L&& l, R&& r) noexcept {
     return tpl::internal::BinaryExpr(
         std::forward<L>(l),
         std::forward<R>(r),
-        tpl::internal::binary_gt
+        tpl::internal::binary_sink
     );
 }
 

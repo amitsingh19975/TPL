@@ -222,6 +222,10 @@ namespace tpl {
             }
             return {};
         }
+
+        auto set_error_handler(TaskId id, ErrorHandler&& handler) noexcept {
+            m_info[tid_to_int(id)].error_handler = std::move(handler);
+        }
     public:
 
         struct DependencyTracker {
@@ -237,6 +241,10 @@ namespace tpl {
             auto deps_on(Ts... ids) -> std::expected<void, SchedulerError> {
                 std::array tmp { ids... };
                 return deps_on(tmp);
+            }
+
+            auto set_error_handler(ErrorHandler handler) noexcept {
+                parent->set_error_handler(id, std::move(handler));
             }
         };
 
