@@ -1,5 +1,6 @@
 #include <cstdlib>
 #include <print>
+#include <stdexcept>
 
 #include "tpl.hpp"
 
@@ -25,7 +26,13 @@ int main() {
         if (i ++ < 5) {
             token.schedule();
         }
+        if (i == 2) {
+            throw std::runtime_error("Hit i = 2");
+        }
         return 1;
+    }, [](std::exception const& e) noexcept {
+        std::println("Error: {}", e.what());
+        return true;
     });
     auto t2 = s.add_task([](TaskToken& token) {
         auto value = token.arg<int>(TaskId(0)).value_or(Cow(-1)).take();
