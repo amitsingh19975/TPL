@@ -14,9 +14,9 @@ int main() {
         | [&i] (TaskToken& t) {
             // One shot independent work that could run on may thread
             t.queue_work([&i] noexcept {
+                ThisThread::sleep_for(std::chrono::seconds(1));
                 std::println("Run[{}]: {}", ++i, ThisThread::pool_id());
-            });
-            ThisThread::sleep_for(std::chrono::seconds(1));
+            }).await();
             t.schedule();
         }
         ;
