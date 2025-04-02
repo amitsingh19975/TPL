@@ -310,7 +310,7 @@ namespace tpl {
             auto task = m_alloc->alloc<queue_item_t>();
             Awaiter<ret_t> await;
             new(task) queue_item_t(
-                [wrapper = await.m_data.get(), fn = std::forward<Fn>(fn), p] noexcept {
+                [wrapper = await.m_data, fn = std::forward<Fn>(fn), p] noexcept {
                     [[maybe_unused]] auto is_priority_set = ThisThread::set_priority(p);
                     assert(is_priority_set == true);
                     if constexpr (std::is_void_v<ret_t>) {

@@ -63,7 +63,7 @@ namespace tpl {
             }
         };
     private:
-        std::unique_ptr<Wrapper> m_data{ std::make_unique<Wrapper>() };
+        std::shared_ptr<Wrapper> m_data{ std::make_unique<Wrapper>() };
     };
 
 } // namespace tpl
