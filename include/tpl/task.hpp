@@ -32,7 +32,7 @@ namespace tpl {
                             t.return_(std::forward<decltype(res)>(res));
                         }
                     } else {
-                        (void)std::invoke(fn, t);
+                        std::invoke(fn, t);
                     }
                 } else {
                     using ret_t = decltype(std::invoke(fn));
@@ -42,7 +42,7 @@ namespace tpl {
                             t.return_(std::forward<decltype(res)>(res));
                         }
                     } else {
-                        (void)std::invoke(fn);
+                        std::invoke(fn);
                     }
                 }
             };

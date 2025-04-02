@@ -5,7 +5,8 @@
 #include "task.hpp"
 #include "signal_tree/int.hpp"
 #include "thread.hpp"
-#include "tpl/list.hpp"
+#include "list.hpp"
+#include "queue.hpp"
 #include "waiter.hpp"
 #include "worker_pool.hpp"
 #include "task_token.hpp"
@@ -17,6 +18,8 @@
 #include <cstdint>
 #include <limits>
 #include <memory>
+#include <print>
+#include <type_traits>
 #include <unordered_set>
 #include <utility>
 #include <vector>
@@ -235,7 +238,6 @@ namespace tpl {
             m_info[tid_to_int(id)].error_handler = std::move(handler);
         }
     public:
-
         struct DependencyTracker {
             TaskId id;
             Scheduler* parent;
@@ -295,6 +297,24 @@ namespace tpl {
             );
         }
 
+        auto queue_work(
+            Task t
+        ) -> void {
+            auto mem = m_alloc->alloc<Task>();
+            new(mem) Task(std::move(t));
+            m_queued_tasks.push(mem);
+            m_pool.waiter.notify_one();
+        }
+
+        template <typename Fn>
+            requires (std::is_nothrow_invocable_r_v<void, Fn>)
+        auto queue_work(
+            Fn&& fn,
+            Task::priority_t p = Task::priority_t::normal
+        ) -> void {
+            return queue_work(Task(std::forward<Fn>(fn), p));
+        }
+
         auto empty() const noexcept -> bool {
             auto sz = m_trees.size();
             for (auto i = 0ul; i < sz; ++i) {
@@ -319,7 +339,7 @@ namespace tpl {
 
             m_pool.waiter.notify_all();
             m_waiter.wait([this] {
-                return m_tasks == 0 && m_pool.is_running();
+                return m_tasks == 0 && m_pool.is_running() && m_queued_tasks.empty();
             });
             m_is_running = false;
             #ifdef __cpp_exceptions
@@ -402,9 +422,11 @@ namespace tpl {
         WorkerPool m_pool;
         internal::Waiter m_waiter;
         std::atomic<TaskId> m_last_processed_task{int_to_tid(std::numeric_limits<std::size_t>::max())};
+        Queue<Task*> m_queued_tasks;
     };
 
     inline auto TaskToken::schedule() noexcept -> void {
+        if (m_id == invalid_task_id) return;
         auto id = tid_to_int(m_id);
         auto& info = m_parent.m_info[id];
         if (info.state != Scheduler::TaskState::alive) return;
@@ -413,10 +435,20 @@ namespace tpl {
     }
 
     inline auto TaskToken::stop() noexcept -> void {
+        if (m_id == invalid_task_id) return;
         m_store.remove(m_id);
         auto id = tid_to_int(m_id);
         m_parent.m_info[id].state.store(Scheduler::TaskState::empty);
         m_result = TaskResult::failed;
+    }
+
+    template <typename Fn>
+        requires (std::is_nothrow_invocable_r_v<void, Fn>)
+    inline auto TaskToken::queue_work(
+        Fn&& fn,
+        ThisThread::Priority p
+    ) -> void {
+        m_parent.queue_work(std::forward<Fn>(fn), p);
     }
 
     inline auto Scheduler::DependencyTracker::deps_on(
@@ -454,12 +486,29 @@ namespace tpl {
         while (m_is_running.load(std::memory_order_acquire)) {
             waiter.wait([this] {
                 return !m_is_running.load(std::memory_order_acquire) || (
-                       m_parent.m_is_running.load(std::memory_order_acquire) &&
-                       m_parent.m_tasks.load(std::memory_order_acquire) != 0);
+                        m_parent.m_is_running.load(std::memory_order_acquire) &&
+                        (
+                            (m_parent.m_tasks.load(std::memory_order_acquire) != 0) ||
+                            !m_parent.m_queued_tasks.empty()
+                        )
+                );
             });
 
             auto idx = m_parent.pop_task();
-            if (!idx.has_value()) continue;
+            if (!idx.has_value()) {
+                auto work = m_parent.m_queued_tasks.pop();
+                if (work) {
+                    auto* w = *work;
+                    auto& task = *w;
+                    auto token = TaskToken(
+                        m_parent,
+                        m_parent.m_store
+                    );
+                    task(token);
+                    m_parent.m_alloc->dealloc(w);
+                }
+                continue;
+            }
             auto id = idx.value();
             auto& info = m_parent.m_info[tid_to_int(id)];
             auto token = TaskToken(
@@ -487,6 +536,7 @@ namespace tpl {
             #else
                 info.task(token);
             #endif
+            if (id == invalid_task_id) return;
             switch (token.m_result) {
             case TaskResult::success: m_parent.on_complete(id, true); break;
             case TaskResult::failed: m_parent.on_failure(id); break;

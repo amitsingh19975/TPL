@@ -7,6 +7,7 @@
 #include <limits>
 #include <tuple>
 #include <utility>
+#include "tpl/thread.hpp"
 #include "worker_pool.hpp"
 #include "value_store.hpp"
 #include "task_id.hpp"
@@ -63,12 +64,22 @@ namespace tpl {
             , m_parent(parent)
         {}
 
+        constexpr TaskToken(
+            Scheduler& parent,
+            ValueStore& store
+        )
+            : m_id(invalid_task_id)
+            , m_store(store)
+            , m_parent(parent)
+        {}
+
         constexpr auto owner_id() const noexcept -> TaskId {
             return m_id;
         }
 
         template <typename T>
         auto return_(T&& val) -> bool {
+            if (m_id == invalid_task_id) return false;
             if (m_result == TaskResult::failed) return false;
             m_store.put(m_id, std::forward<T>(val));
             return true;
@@ -141,6 +152,13 @@ namespace tpl {
         constexpr auto is_success() const noexcept -> bool {
             return m_result == TaskResult::success;
         }
+
+        template <typename Fn>
+            requires (std::is_nothrow_invocable_r_v<void, Fn>)
+        auto queue_work(
+            Fn&& fn,
+            ThisThread::Priority p = ThisThread::Priority::normal
+        ) -> void;
     private:
         friend struct WorkerPool;
     private:
