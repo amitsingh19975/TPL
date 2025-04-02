@@ -191,8 +191,6 @@ namespace tpl {
             constexpr auto get_scheduler() noexcept -> Scheduler* {
                 return s; 
             }
-
-            auto operator()() {}
         };
 
     } // namespace internal
@@ -363,6 +361,9 @@ namespace tpl {
                 requires (std::same_as<std::decay_t<TL>, SchedulerExpr>)
             auto eval(Scheduler& s, TL&&, TR&& r, auto) {
                 if constexpr (is_expr_v<TR>) return r(s);
+                else if constexpr (is_task_fn<TR>) {
+                    return s.add_task(std::forward<TR>(r));
+                }
                 else return r;
             }
 
@@ -370,6 +371,9 @@ namespace tpl {
                 requires (std::same_as<std::decay_t<TR>, SchedulerExpr>)
             auto eval(Scheduler& s, TL&& l, TR&&, auto) {
                 if constexpr (is_expr_v<TL>) return l(s);
+                else if constexpr (is_task_fn<TL>) {
+                    return s.add_task(std::forward<TL>(l));
+                }
                 else return l;
             }
 
