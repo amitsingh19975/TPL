@@ -302,7 +302,7 @@ namespace tpl {
 
         template <typename Fn>
             requires (std::is_nothrow_invocable_v<Fn>)
-        auto queue_work(
+        auto awaitable_queue_work(
             Fn&& fn,
             Task::priority_t p = Task::priority_t::normal
         ) -> Awaiter<decltype(std::invoke(fn))> {
@@ -323,6 +323,23 @@ namespace tpl {
             );
             m_queued_tasks.push(task);
             return await;
+        }
+
+        template <typename Fn>
+            requires (std::is_nothrow_invocable_r_v<void, Fn>)
+        auto queue_work(
+            Fn&& fn,
+            Task::priority_t p = Task::priority_t::normal
+        ) -> void {
+            auto task = m_alloc->alloc<queue_item_t>();
+            new(task) queue_item_t(
+                [fn = std::forward<Fn>(fn), p] noexcept {
+                    [[maybe_unused]] auto is_priority_set = ThisThread::set_priority(p);
+                    assert(is_priority_set == true);
+                    std::invoke(fn);
+                }
+            );
+            m_queued_tasks.push(task);
         }
 
         auto empty() const noexcept -> bool {
@@ -453,13 +470,23 @@ namespace tpl {
     }
 
     template <typename Fn>
-        requires (std::is_nothrow_invocable_v<Fn>)
+        requires (std::is_nothrow_invocable_r_v<void, Fn>)
     inline auto TaskToken::queue_work(
         Fn&& fn,
         ThisThread::Priority p
-    ) -> Awaiter<decltype(std::invoke(fn))> {
-        return m_parent.queue_work(std::forward<Fn>(fn), p);
+    ) -> void {
+        m_parent.queue_work(std::forward<Fn>(fn), p);
     }
+
+    template <typename Fn>
+        requires (std::is_nothrow_invocable_v<Fn>)
+    inline auto TaskToken::awaitable_queue_work(
+        Fn&& fn,
+        ThisThread::Priority p
+    ) -> Awaiter<decltype(std::invoke(fn))> {
+        return m_parent.awaitable_queue_work(std::forward<Fn>(fn), p);
+    }
+
 
     inline auto Scheduler::DependencyTracker::deps_on(
         std::span<DependencyTracker> ids

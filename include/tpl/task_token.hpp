@@ -156,10 +156,17 @@ namespace tpl {
 
         template <typename Fn>
             requires (std::is_nothrow_invocable_v<Fn>)
-        auto queue_work(
+        auto awaitable_queue_work(
             Fn&& fn,
             ThisThread::Priority p = ThisThread::Priority::normal
         ) -> Awaiter<decltype(std::invoke(fn))>;
+
+        template <typename Fn>
+            requires (std::is_nothrow_invocable_r_v<void, Fn>)
+        auto queue_work(
+            Fn&& fn,
+            ThisThread::Priority p = ThisThread::Priority::normal
+        ) -> void;
     private:
         friend struct WorkerPool;
     private:
