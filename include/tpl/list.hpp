@@ -92,6 +92,20 @@ namespace tpl {
             return m_count.load(std::memory_order_relaxed);
         }
 
+        void resize(size_type count, value_type def = {}) {
+            while (count > size()) {
+                push_back(def);
+            }
+        }
+
+        void reset(value_type def) {
+            auto sz = size();
+            for (auto i = 0ul; i < sz; ++i) {
+                this->operator[](i) = def;
+            }
+        }
+
+        // INFO: Not thread safe
         void clear() {
             Node* tail = m_tail.load(std::memory_order_relaxed);
             while (tail) {
