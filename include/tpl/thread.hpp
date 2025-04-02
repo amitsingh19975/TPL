@@ -3,6 +3,7 @@
 
 #include "hw_config.hpp"
 #include <cstdint>
+#include <vector>
 #include <cstring>
 #include <limits>
 #include <optional>
