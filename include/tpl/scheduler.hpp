@@ -7,6 +7,7 @@
 #include "thread.hpp"
 #include "list.hpp"
 #include "queue.hpp"
+#include "awaiter.hpp"
 #include "waiter.hpp"
 #include "worker_pool.hpp"
 #include "task_token.hpp"
@@ -16,6 +17,7 @@
 #include <atomic>
 #include <concepts>
 #include <cstdint>
+#include <functional>
 #include <limits>
 #include <memory>
 #include <print>
@@ -59,6 +61,7 @@ namespace tpl {
     private:
         friend struct TaskToken;
         friend struct WorkerPool;
+        using queue_item_t = std::function<void()>;
 
         enum class TaskState: std::uint8_t {
             empty = 0,
@@ -297,22 +300,29 @@ namespace tpl {
             );
         }
 
-        auto queue_work(
-            Task t
-        ) -> void {
-            auto mem = m_alloc->alloc<Task>();
-            new(mem) Task(std::move(t));
-            m_queued_tasks.push(mem);
-            m_pool.waiter.notify_one();
-        }
-
         template <typename Fn>
-            requires (std::is_nothrow_invocable_r_v<void, Fn>)
+            requires (std::is_nothrow_invocable_v<Fn>)
         auto queue_work(
             Fn&& fn,
             Task::priority_t p = Task::priority_t::normal
-        ) -> void {
-            return queue_work(Task(std::forward<Fn>(fn), p));
+        ) -> Awaiter<decltype(std::invoke(fn))> {
+            using ret_t = decltype(std::invoke(fn));
+            auto task = m_alloc->alloc<queue_item_t>();
+            Awaiter<ret_t> await;
+            new(task) queue_item_t(
+                [wrapper = await.m_data.get(), fn = std::forward<Fn>(fn), p] noexcept {
+                    [[maybe_unused]] auto is_priority_set = ThisThread::set_priority(p);
+                    assert(is_priority_set == true);
+                    if constexpr (std::is_void_v<ret_t>) {
+                        std::invoke(fn);
+                        wrapper->notify_value();
+                    } else {
+                        wrapper->notify_value(std::invoke(fn));
+                    }
+                }
+            );
+            m_queued_tasks.push(task);
+            return await;
         }
 
         auto empty() const noexcept -> bool {
@@ -422,7 +432,7 @@ namespace tpl {
         WorkerPool m_pool;
         internal::Waiter m_waiter;
         std::atomic<TaskId> m_last_processed_task{int_to_tid(std::numeric_limits<std::size_t>::max())};
-        Queue<Task*> m_queued_tasks;
+        Queue<queue_item_t*> m_queued_tasks;
     };
 
     inline auto TaskToken::schedule() noexcept -> void {
@@ -443,12 +453,12 @@ namespace tpl {
     }
 
     template <typename Fn>
-        requires (std::is_nothrow_invocable_r_v<void, Fn>)
+        requires (std::is_nothrow_invocable_v<Fn>)
     inline auto TaskToken::queue_work(
         Fn&& fn,
         ThisThread::Priority p
-    ) -> void {
-        m_parent.queue_work(std::forward<Fn>(fn), p);
+    ) -> Awaiter<decltype(std::invoke(fn))> {
+        return m_parent.queue_work(std::forward<Fn>(fn), p);
     }
 
     inline auto Scheduler::DependencyTracker::deps_on(
@@ -504,7 +514,7 @@ namespace tpl {
                         m_parent,
                         m_parent.m_store
                     );
-                    task(token);
+                    task();
                     m_parent.m_alloc->dealloc(w);
                 }
                 continue;
