@@ -4,6 +4,7 @@
 #include "atomic.hpp"
 #include <array>
 #include <atomic>
+#include <concepts>
 #include <cstddef>
 #include <type_traits>
 
@@ -92,9 +93,47 @@ namespace tpl {
             return m_count.load(std::memory_order_relaxed);
         }
 
-        void resize(size_type count, value_type def = {}) {
+        template <typename Fn>
+        constexpr auto for_each(Fn&& fn) noexcept -> void {
+            Node* root = m_tail.load(std::memory_order_relaxed);
+            auto i = 0ul;
+            while (root) {
+                auto sz = root->size.load(std::memory_order_relaxed);
+                for (auto k = 0ul; k < sz; ++k, ++i) {
+                    if constexpr (std::invocable<Fn, reference> || std::invocable<Fn, const_reference>) {
+                        fn(this->operator[](i));
+                    } else if constexpr (std::invocable<Fn, reference, std::size_t> || std::invocable<Fn, const_reference, std::size_t>) {
+                        fn(this->operator[](i), i);
+                    } else if constexpr (std::invocable<Fn, std::size_t>){
+                        fn(i);
+                    }
+                }
+                root = root->next.load(std::memory_order_relaxed);
+            }
+        }
+
+        template <typename Fn>
+        constexpr auto for_each(Fn&& fn) const noexcept -> void {
+            Node* root = m_tail.load(std::memory_order_relaxed);
+            auto i = 0ul;
+            while (root) {
+                auto sz = root->size.load(std::memory_order_relaxed);
+                for (auto k = 0ul; k < sz; ++k, ++i) {
+                    if constexpr (std::invocable<Fn, const_reference>) {
+                        fn(this->operator[](i));
+                    } else if constexpr (std::invocable<Fn, const_reference, std::size_t>) {
+                        fn(this->operator[](i), i);
+                    } else if constexpr (std::invocable<Fn, std::size_t>){
+                        fn(i);
+                    }
+                }
+                root = root->next.load(std::memory_order_relaxed);
+            }
+        }
+
+        void resize(size_type count) {
             while (count > size()) {
-                push_back(def);
+                push_back({});
             }
         }
 
