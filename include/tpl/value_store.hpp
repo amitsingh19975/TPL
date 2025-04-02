@@ -42,11 +42,9 @@ namespace tpl {
 
     // NOTE: This is not a thread-safe.
     struct ValueStore {
-        ValueStore(std::size_t Cap, BlockAllocator* allocator) noexcept
+        ValueStore(BlockAllocator* allocator) noexcept
             : m_allocator(allocator)
-        {
-            m_values.resize(Cap);
-        }
+        {}
         ValueStore(ValueStore const&) noexcept = delete;
         ValueStore(ValueStore &&) noexcept = delete;
         ValueStore& operator=(ValueStore const&) noexcept = delete;

@@ -5,6 +5,7 @@
 #include "task.hpp"
 #include "signal_tree/int.hpp"
 #include "thread.hpp"
+#include "tpl/list.hpp"
 #include "waiter.hpp"
 #include "worker_pool.hpp"
 #include "task_token.hpp"
@@ -129,7 +130,8 @@ namespace tpl {
         };
 
         auto set_signal(TaskId id) -> void {
-            if (m_info[tid_to_int(id)].state != TaskState::alive) return;
+            auto idx = tid_to_int(id);
+            if (m_info[idx].state != TaskState::alive) return;
             auto [b, p] = parse_task_id(id);
             m_trees[b].set(p);
         }
@@ -185,17 +187,17 @@ namespace tpl {
         }
 
         auto build() -> std::expected<void, SchedulerError> {
-            for (auto& t: m_trees) {
-                t.clear();
-            }
+            auto sz = m_trees.size();
+            for (auto i = 0ul; i < sz; ++i) m_trees[i].clear();
+
             // 1. find incoming edges
             // Now we need to find nodes that do not have incoming edges
             std::vector<std::size_t> in_edges(m_info.size(), 0);
-            for (auto const& info: m_info) {
+            m_info.for_each([&in_edges](auto& info) {
                 // Need to consider both dead and alive
-                if (info.state == TaskState::empty) continue;
+                if (info.state == TaskState::empty) return;
                 for (auto dep: info.dep_signals) in_edges[tid_to_int(dep)]++;
-            }
+            });
 
             // 2. queue tasks if there is no deps
             for (auto i = 0ul; i < in_edges.size(); ++i) {
@@ -210,20 +212,18 @@ namespace tpl {
             // 3. set consumable output values
             std::fill(in_edges.begin(), in_edges.end(), 0);
             auto& freq = in_edges;
-            for (auto i = 0ul; i < m_info.size(); ++i) {
-                auto& info = m_info[i];
-                if (info.state != TaskState::alive) continue;
+            m_info.for_each([&freq](auto& info, std::size_t i) {
+                if (info.state != TaskState::alive) return;
                 freq[i] += info.dep_signals.size();
-            }
+            });
 
-            for (auto i = 0ul; i < m_info.size(); ++i) {
-                auto& info = m_info[i];
-                if (info.state != TaskState::alive) continue;
+            m_info.for_each([&freq](TaskInfo& info) {
+                if (info.state != TaskState::alive) return;
                 for (auto j = 0ul; j < info.inputs.size(); ++j) {
                     auto& in = info.inputs[j];
                     in.second = (freq[tid_to_int(in.first)] == 0);
                 }
-            }
+            });
 
             if (empty()) {
                 return std::unexpected(SchedulerError::no_root_task);
@@ -260,20 +260,16 @@ namespace tpl {
             Task t,
             ErrorHandler handler
         ) -> DependencyTracker {
-            if (m_trees.size() * capacity > m_info.size()) resize_info(m_trees.size() * capacity);
+            ensure_space_for(m_info.size() + 1);
 
-            for (auto i = 0ul; i < m_info.size(); ++i) {
+            auto sz = m_info.size();
+            for (auto i = 0ul; i < sz; ++i) {
                 auto& info = m_info[i];
                 if (info.state == TaskState::alive) continue;
                 m_info[i] = TaskInfo(std::move(t), std::move(handler));
                 return { .id = int_to_tid(i), .parent = this };
             }
-
-            m_trees.push_back(signal_tree{});
-            auto size = m_info.size();
-            resize_info(m_trees.size() * capacity);
-            m_info[size] = TaskInfo(std::move(t), std::move(handler));
-            return { .id = int_to_tid(size), .parent = this };
+            std::unreachable();
         }
 
         template <typename Fn>
@@ -300,14 +296,16 @@ namespace tpl {
         }
 
         auto empty() const noexcept -> bool {
-            for(auto const& t: m_trees) {
+            auto sz = m_trees.size();
+            for (auto i = 0ul; i < sz; ++i) {
+                auto& t = m_trees[i];
                 if (!t.empty()) return false;
             }
             return true;
         }
 
         auto reset() {
-            for (auto& t: m_trees) t.clear();
+            m_trees.clear();
             m_info.clear();
             m_store.clear();
         }
@@ -325,7 +323,9 @@ namespace tpl {
             });
             m_is_running = false;
             #ifdef __cpp_exceptions
-            for (auto& t: m_info) {
+            auto sz = m_info.size();
+            for (auto i = 0ul; i < sz; ++i) {
+                auto& t = m_info[i];
                 if (t.expception_ptr) {
                     std::rethrow_exception(t.expception_ptr);
                 }
@@ -370,13 +370,16 @@ namespace tpl {
             return false;
         }
 
-        void resize_info(std::size_t size) {
+        void ensure_space_for(std::size_t size) {
+            m_trees.resize((size + capacity - 1) / capacity);
             m_info.resize(size);
             m_store.resize(size);
         }
 
         auto pop_task() -> std::optional<TaskId> {
-            for (auto& t: m_trees) {
+            auto sz = m_trees.size();
+            for (auto i = 0ul; i < sz; ++i) {
+                auto& t = m_trees[i];
                 auto [idx, _] = t.select();
                 if (idx.is_invalid()) continue;
                 return { int_to_tid(idx.index) };
@@ -391,11 +394,11 @@ namespace tpl {
         }
     private:
         std::unique_ptr<BlockAllocator> m_alloc{ std::make_unique<BlockAllocator>() };
-        std::vector<signal_tree> m_trees{1};
-        std::vector<TaskInfo> m_info{capacity};
+        BlockSizedList<signal_tree, 1> m_trees;
+        BlockSizedList<TaskInfo, capacity> m_info;
         std::atomic<std::size_t> m_tasks{0};
         std::atomic<bool> m_is_running{false};
-        ValueStore m_store{m_info.size(), m_alloc.get()};
+        ValueStore m_store{m_alloc.get()};
         WorkerPool m_pool;
         internal::Waiter m_waiter;
         std::atomic<TaskId> m_last_processed_task{int_to_tid(std::numeric_limits<std::size_t>::max())};

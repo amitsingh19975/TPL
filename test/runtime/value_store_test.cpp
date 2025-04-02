@@ -8,7 +8,8 @@ using namespace tpl;
 
 TEST_CASE("Value Store", "[value_store]" ) {
     GIVEN("An empty store with size 5") {
-        auto store = ValueStore{5, new BlockAllocator()};
+        auto store = ValueStore{new BlockAllocator()};
+        store.resize(5);
         REQUIRE(store.empty());
         REQUIRE(store.size() == 0);
 
