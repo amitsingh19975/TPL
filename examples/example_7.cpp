@@ -12,6 +12,7 @@ int main() {
     auto i = 0ul;
     auto ts = s
         | [&i] (TaskToken& t) {
+            // One shot independent work that could run on may thread
             t.queue_work([&i] noexcept {
                 std::println("Run[{}]: {}", ++i, ThisThread::pool_id());
             });
