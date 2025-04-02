@@ -1,6 +1,7 @@
 #ifndef AMT_TPL_WORKER_POOL_HPP
 #define AMT_TPL_WORKER_POOL_HPP
 
+#include <vector>
 #include "thread.hpp"
 #include "waiter.hpp"
 
