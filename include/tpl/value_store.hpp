@@ -4,6 +4,7 @@
 #include "allocator.hpp"
 #include "task_id.hpp"
 #include "cow.hpp"
+#include "list.hpp"
 #include <cstring>
 #include <type_traits>
 #include <expected>
@@ -43,8 +44,9 @@ namespace tpl {
     struct ValueStore {
         ValueStore(std::size_t Cap, BlockAllocator* allocator) noexcept
             : m_allocator(allocator)
-            , m_values(Cap)
-        {}
+        {
+            m_values.resize(Cap);
+        }
         ValueStore(ValueStore const&) noexcept = delete;
         ValueStore(ValueStore &&) noexcept = delete;
         ValueStore& operator=(ValueStore const&) noexcept = delete;
@@ -122,7 +124,9 @@ namespace tpl {
         }
 
         auto clear() noexcept -> void {
-            for (auto& v: m_values) {
+            auto sz = m_values.size();
+            for (auto i = 0ul; i < sz; ++i) {
+                auto& v = m_values[i];
                 if (!v.destroy) continue;
                 v.destroy(v.value);
                 v.destroy = nullptr;
@@ -155,7 +159,7 @@ namespace tpl {
         };
     private:
         BlockAllocator* m_allocator{nullptr};
-        std::vector<Value> m_values;
+        BlockSizedList<Value> m_values;
         std::atomic<std::size_t> m_size{0};
     };
 
