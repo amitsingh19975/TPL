@@ -95,38 +95,56 @@ namespace tpl {
 
         template <typename Fn>
         constexpr auto for_each(Fn&& fn) noexcept -> void {
-            Node* root = m_tail.load(std::memory_order_relaxed);
             auto i = 0ul;
-            while (root) {
-                auto sz = root->size.load(std::memory_order_relaxed);
+            auto iter = [&i, &fn](Node& node) {
+                auto sz = node.size.load(std::memory_order_relaxed);
                 for (auto k = 0ul; k < sz; ++k, ++i) {
                     if constexpr (std::invocable<Fn, reference> || std::invocable<Fn, const_reference>) {
-                        fn(this->operator[](i));
+                        fn(node.data[k]);
                     } else if constexpr (std::invocable<Fn, reference, std::size_t> || std::invocable<Fn, const_reference, std::size_t>) {
-                        fn(this->operator[](i), i);
+                        fn(node.data[k], i);
                     } else if constexpr (std::invocable<Fn, std::size_t>){
                         fn(i);
                     }
                 }
+            };
+            auto count = m_count.load(std::memory_order_relaxed);
+            auto sz = std::min(count, m_cache.size());
+            for (auto j = 0ul; j < sz; ++j) {
+                iter(*m_cache[j]);
+            }
+            Node* root = m_cache[m_cache.size() - 1];
+            if (!root) return;
+            root = root->next.load(std::memory_order_relaxed);
+            while (root) {
                 root = root->next.load(std::memory_order_relaxed);
             }
         }
 
         template <typename Fn>
         constexpr auto for_each(Fn&& fn) const noexcept -> void {
-            Node* root = m_tail.load(std::memory_order_relaxed);
             auto i = 0ul;
-            while (root) {
-                auto sz = root->size.load(std::memory_order_relaxed);
+            auto iter = [&i, &fn](Node& node) {
+                auto sz = node.size.load(std::memory_order_relaxed);
                 for (auto k = 0ul; k < sz; ++k, ++i) {
-                    if constexpr (std::invocable<Fn, const_reference>) {
-                        fn(this->operator[](i));
-                    } else if constexpr (std::invocable<Fn, const_reference, std::size_t>) {
-                        fn(this->operator[](i), i);
+                    if constexpr (std::invocable<Fn, reference> || std::invocable<Fn, const_reference>) {
+                        fn(node.data[k]);
+                    } else if constexpr (std::invocable<Fn, reference, std::size_t> || std::invocable<Fn, const_reference, std::size_t>) {
+                        fn(node.data[k], i);
                     } else if constexpr (std::invocable<Fn, std::size_t>){
                         fn(i);
                     }
                 }
+            };
+            auto count = m_count.load(std::memory_order_relaxed);
+            auto sz = std::min(count, m_cache.size());
+            for (auto j = 0ul; j < sz; ++j) {
+                iter(*m_cache[j]);
+            }
+            Node* root = m_cache[m_cache.size() - 1];
+            if (!root) return;
+            root = root->next.load(std::memory_order_relaxed);
+            while (root) {
                 root = root->next.load(std::memory_order_relaxed);
             }
         }
