@@ -4,8 +4,10 @@
 #include "atomic.hpp"
 #include <array>
 #include <atomic>
+#include <cassert>
 #include <concepts>
 #include <cstddef>
+#include <iterator>
 #include <type_traits>
 
 namespace tpl {
@@ -26,6 +28,57 @@ namespace tpl {
             std::atomic<std::size_t> size{0};
         };
     public:
+        template <bool IsConst>
+        struct Iterator {
+            using iterator_category = std::forward_iterator_tag;
+            using value_type        = T;
+            using difference_type   = std::ptrdiff_t;
+            using pointer           = T*;
+            using reference         = T&;
+            using node_t = std::conditional_t<IsConst, Node const*, Node*>;
+
+            constexpr Iterator(node_t data, std::size_t index = 0) noexcept
+                : m_node(data)
+                , m_index(index)
+            {}
+            constexpr Iterator(Iterator const&) noexcept = default;
+            constexpr Iterator(Iterator &&) noexcept = default;
+            constexpr Iterator& operator=(Iterator const&) noexcept = default;
+            constexpr Iterator& operator=(Iterator &&) noexcept = default;
+            constexpr ~Iterator() noexcept = default;
+
+            constexpr reference operator*() const noexcept {
+                assert(m_node != nullptr);
+                return m_node->data[m_index];
+            }
+
+            constexpr pointer operator->() const  noexcept{
+                return &m_node->data[m_index];
+            }
+
+            constexpr Iterator& operator++() noexcept {
+                auto next = m_index + 1;
+                auto const bidx = next / block_size;
+                m_index = next % block_size;
+                if (bidx != 0) m_node = m_node->next.load(std::memory_order_relaxed);
+                return *this;
+            }
+
+            constexpr Iterator& operator++(int) noexcept {
+                auto tmp = *this;
+                ++(*this);
+                return tmp;
+            }
+            constexpr auto operator==(Iterator const&) const noexcept -> bool = default;
+            constexpr auto operator!=(Iterator const&) const noexcept -> bool = default;
+        private:
+            node_t m_node{};
+            std::size_t m_index{};
+        };
+
+        using iterator = Iterator<false>;
+        using const_iterator = Iterator<true>;
+
         void push_back(value_type val) noexcept(std::is_nothrow_move_assignable_v<value_type>) {
             auto node = new Node();
             node->data[0] = std::move(val);
@@ -174,6 +227,30 @@ namespace tpl {
             m_head = nullptr;
             m_count = 0;
             for(auto i = 0ul; i < m_cache.size(); ++i) m_cache[i] = nullptr;
+        }
+
+        constexpr auto begin() noexcept -> iterator {
+            return { m_tail.load(std::memory_order_relaxed), 0 };
+        }
+
+        constexpr auto end() noexcept -> iterator {
+            Node* node = m_head.load(std::memory_order_relaxed);
+            if (!node) return { nullptr };
+            auto sz = node->size.load(std::memory_order_relaxed);
+            if (sz == block_size) return { nullptr };
+            return { node, sz };
+        }
+
+        constexpr auto begin() const noexcept -> const_iterator {
+            return { m_tail.load(std::memory_order_relaxed), 0 };
+        }
+
+        constexpr auto end() const noexcept -> const_iterator {
+            Node const* node = m_head.load(std::memory_order_relaxed);
+            if (!node) return { nullptr };
+            auto sz = node->size.load(std::memory_order_relaxed);
+            if (sz == block_size) return { nullptr };
+            return { node, sz };
         }
     private:
         constexpr auto try_push_element(Node* node, reference val) noexcept(std::is_nothrow_move_assignable_v<value_type>) -> bool {
