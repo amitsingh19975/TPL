@@ -122,13 +122,11 @@ namespace tpl {
         }
 
         auto clear() noexcept -> void {
-            auto sz = m_values.size();
-            for (auto i = 0ul; i < sz; ++i) {
-                auto& v = m_values[i];
-                if (!v.destroy) continue;
+            m_values.for_each([](Value& v) {
+                if (!v.destroy) return;
                 v.destroy(v.value);
                 v.destroy = nullptr;
-            }
+            });
             m_allocator->reset(true);
             m_size = 0;
         }

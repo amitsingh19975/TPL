@@ -267,11 +267,12 @@ namespace tpl {
         ) -> DependencyTracker {
             ensure_space_for(m_info.size() + 1);
 
-            auto sz = m_info.size();
-            for (auto i = 0ul; i < sz; ++i) {
-                auto& info = m_info[i];
-                if (info.state == TaskState::alive) continue;
-                m_info[i] = TaskInfo(std::move(t), std::move(handler));
+            for (auto i = 0ul; auto& info: m_info) {
+                if (info.state == TaskState::alive) {
+                    ++i;
+                    continue;
+                }
+                info = TaskInfo(std::move(t), std::move(handler));
                 return { .id = int_to_tid(i), .parent = this };
             }
             std::unreachable();
@@ -370,9 +371,7 @@ namespace tpl {
             });
             m_is_running = false;
             #ifdef __cpp_exceptions
-            auto sz = m_info.size();
-            for (auto i = 0ul; i < sz; ++i) {
-                auto& t = m_info[i];
+            for (auto const& t: m_info) {
                 if (t.expception_ptr) {
                     std::rethrow_exception(t.expception_ptr);
                 }
@@ -424,9 +423,7 @@ namespace tpl {
         }
 
         auto pop_task() -> std::optional<TaskId> {
-            auto sz = m_trees.size();
-            for (auto i = 0ul; i < sz; ++i) {
-                auto& t = m_trees[i];
+            for (auto& t: m_trees) {
                 auto [idx, _] = t.select();
                 if (idx.is_invalid()) continue;
                 return { int_to_tid(idx.index) };
