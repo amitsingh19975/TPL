@@ -278,7 +278,7 @@ namespace tpl {
         using node_inner_t = BoundedQueue<atomic::Atomic::int_t, BlockSize>;
         struct Node {
             node_inner_t q;
-            alignas(internal::hardware_destructive_interference_size) std::atomic<Node*> next{};
+            std::atomic<Node*> next{};
         };
     public:
         constexpr Queue() noexcept = default;
@@ -407,6 +407,7 @@ namespace tpl {
                 }
 
                 if (m_tail.compare_exchange_weak(tail, next, std::memory_order_acquire, std::memory_order_relaxed)) {
+                    // Keep the nodes around
                     push_back(tail);
                 }
 
@@ -436,8 +437,11 @@ namespace tpl {
         }
         using free_queue_t = BoundedQueue<Node*, BlockSize>;
     private:
-        alignas(internal::hardware_destructive_interference_size) std::atomic<Node*> m_head{};
+        std::atomic<Node*> m_head{};
         alignas(internal::hardware_destructive_interference_size) std::atomic<Node*> m_tail{};
+        // Need this keep the pointers even after deleting
+        // TODO: Remove this when we can have a better way to track deallocation or
+        // how many nodes owns the pointer. Hazard Pointers or RCU ?
         BlockAllocator m_node_allocator;
         free_queue_t m_free_nodes;
     };
