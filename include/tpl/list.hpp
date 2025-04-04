@@ -8,9 +8,7 @@
 #include <concepts>
 #include <cstddef>
 #include <iterator>
-#include <memory>
 #include <memory_resource>
-#include <optional>
 #include <type_traits>
 
 namespace tpl {
