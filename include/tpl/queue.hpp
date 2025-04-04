@@ -5,12 +5,9 @@
 #include <memory_resource>
 #include <print>
 #include <utility>
-
-#include "allocator.hpp"
 #include "basic.hpp"
 #include "atomic.hpp"
-#include "tpl/hazard_ptr.hpp"
-#include <cstdint>
+#include "hazard_ptr.hpp"
 #include <new>
 #include <type_traits>
 

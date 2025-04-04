@@ -1,10 +1,9 @@
 #ifndef AMT_TPL_HAZARD_PTR_HPP
 #define AMT_TPL_HAZARD_PTR_HPP
 
-#include "tpl/list.hpp"
+#include "list.hpp"
 #include <atomic>
 #include <concepts>
-#include <cstdint>
 #include <functional>
 #include <memory>
 #include <memory_resource>
