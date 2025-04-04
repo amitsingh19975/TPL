@@ -474,8 +474,6 @@ namespace tpl {
         mutable std::pmr::polymorphic_allocator<std::byte> m_alloc;
         HazardPointerDomain m_domain;
         free_queue_t m_free_nodes;
-        std::atomic_flag m_push_done{false};
-        std::atomic_flag m_pop_done{false};
     };
 } // namespace tpl
 
