@@ -2,12 +2,14 @@
 #define AMT_TPL_QUEUE_HPP
 
 #include <atomic>
+#include <memory_resource>
 #include <print>
 #include <utility>
 
 #include "allocator.hpp"
 #include "basic.hpp"
 #include "atomic.hpp"
+#include "tpl/hazard_ptr.hpp"
 #include <cstdint>
 #include <new>
 #include <type_traits>
@@ -276,7 +278,7 @@ namespace tpl {
         using const_pointer = T const*;
     private:
         using node_inner_t = BoundedQueue<atomic::Atomic::int_t, BlockSize>;
-        struct Node {
+        struct Node: HazardPointerObjBase<Node> {
             node_inner_t q;
             std::atomic<Node*> next{};
         };
@@ -289,6 +291,10 @@ namespace tpl {
         ~Queue() noexcept {
             reset();
         }
+
+        constexpr Queue(std::pmr::polymorphic_allocator<std::byte> allocator) noexcept
+            : m_alloc(std::move(allocator))
+        {}
 
         constexpr auto size() const noexcept -> size_type {
             size_type count{};
@@ -316,17 +322,29 @@ namespace tpl {
 
         auto reset() noexcept {
             {
-                Node* tmp = m_tail.load();
+                Node* tmp = m_tail.load(std::memory_order_relaxed);
                 while (tmp) {
                     tmp->q.clear();
-                    auto next = tmp->next.load();
-                    tmp->~Node();
+                    auto next = tmp->next.load(std::memory_order_relaxed);
+                    tmp->retire([this](Node* node) {
+                        if (!node) return;
+                        m_alloc.delete_object(node);
+                    }, m_domain);
                     tmp = next;
+                }
+
+                while (!m_free_nodes.empty()) {
+                    tmp = m_free_nodes.pop().value_or(nullptr);
+                    if (!tmp) break;
+                    tmp->retire([this](Node* node) {
+                        if (!node) return;
+                        m_alloc.delete_object(node);
+                    }, m_domain);
                 }
             }
             m_tail = nullptr;
             m_head = nullptr;
-            m_node_allocator.reset();
+            m_domain.cleanup();
         }
 
         template <typename... Args>
@@ -342,9 +360,11 @@ namespace tpl {
         TPL_ATOMIC_FUNC_ATTR auto push(node_inner_t::value_t val) -> bool {
             Node* head{};
             Node* node{};
+            bool is_node_inserted = false;
 
             while (true) {
-                head = m_head.load(std::memory_order_acquire);
+                auto holder = make_hazard_pointer(m_domain);
+                head = holder.protect(m_head);
 
                 if (head != nullptr) {
                     if (head->q.push_value(val)) {
@@ -355,8 +375,7 @@ namespace tpl {
                 if (!node) {
                     node = m_free_nodes.pop().value_or(nullptr);
                     if (!node) {
-                        node = m_node_allocator.alloc<Node>();
-                        new(node) Node();
+                        node = m_alloc.new_object<Node>();
                     } else {
                         node->next = nullptr;
                     }
@@ -364,22 +383,33 @@ namespace tpl {
 
                 if (!node) return false;
 
-                if (!m_head.compare_exchange_weak(head, node, std::memory_order_release, std::memory_order_relaxed)) {
+                if (!m_head.compare_exchange_weak(
+                    head,
+                    node,
+                    std::memory_order_release,
+                    std::memory_order_relaxed
+                )) {
                     continue;
                 }
 
                 // (old head) -> node(new head)
                 if (head) head->next.store(node, std::memory_order_relaxed);
+                is_node_inserted = true;
             }
 
-            if (node != head && node) {
+            if (!is_node_inserted) {
                 push_back(node);
             }
 
             while (true) {
                 Node* tail = m_tail.load(std::memory_order_acquire);
                 if (tail != nullptr)  break;
-                if (m_tail.compare_exchange_weak(tail, head, std::memory_order_release, std::memory_order_relaxed)) {
+                if (m_tail.compare_exchange_weak(
+                    tail,
+                    head,
+                    std::memory_order_release,
+                    std::memory_order_relaxed
+                )) {
                     break;
                 }
             }
@@ -388,9 +418,9 @@ namespace tpl {
         }
 
         auto pop() -> std::optional<T> {
-            Node* tail{};
             while (true) {
-                tail = m_tail.load(std::memory_order_acquire);
+                auto holder = make_hazard_pointer(m_domain);
+                auto tail = holder.protect(m_tail);
                 if (!tail) return {};
 
                 auto tmp = tail->q.pop();
@@ -406,7 +436,13 @@ namespace tpl {
                     return {};
                 }
 
-                if (m_tail.compare_exchange_weak(tail, next, std::memory_order_acquire, std::memory_order_relaxed)) {
+                if (m_tail.compare_exchange_weak(
+                    tail,
+                    next,
+                    std::memory_order_acquire,
+                    std::memory_order_relaxed
+                )) {
+
                     // Keep the nodes around
                     push_back(tail);
                 }
@@ -418,12 +454,6 @@ namespace tpl {
         constexpr auto full() const noexcept { return false; }
 
     private:
-        static constexpr auto node_scope(std::atomic<Node*> const& n, std::memory_order order, auto&& fn) noexcept -> void {
-            Node* tmp = n.load(order);
-            if (!tmp) return;
-            fn(tmp);
-        }
-
         constexpr auto push_back(Node* node) noexcept -> void {
             if (!node) return;
 
@@ -431,19 +461,21 @@ namespace tpl {
                 Node* tmp = m_free_nodes.pop().value_or(nullptr);
                 if (!tmp) continue;
 
-                tmp->~Node();
-                m_node_allocator.dealloc(tmp);
+                node->retire([this] (Node* node) {
+                    if (!node) return;
+                    m_alloc.delete_object(node);
+                }, m_domain);
             }
         }
         using free_queue_t = BoundedQueue<Node*, BlockSize>;
     private:
         std::atomic<Node*> m_head{};
         alignas(internal::hardware_destructive_interference_size) std::atomic<Node*> m_tail{};
-        // Need this keep the pointers even after deleting
-        // TODO: Remove this when we can have a better way to track deallocation or
-        // how many nodes owns the pointer. Hazard Pointers or RCU ?
-        BlockAllocator m_node_allocator;
+        mutable std::pmr::polymorphic_allocator<std::byte> m_alloc;
+        HazardPointerDomain m_domain;
         free_queue_t m_free_nodes;
+        std::atomic_flag m_push_done{false};
+        std::atomic_flag m_pop_done{false};
     };
 } // namespace tpl
 

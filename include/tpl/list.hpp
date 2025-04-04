@@ -4,22 +4,22 @@
 #include "atomic.hpp"
 #include <array>
 #include <atomic>
+#include <bit>
 #include <cassert>
 #include <concepts>
 #include <cstddef>
+#include <cstdint>
+#include <functional>
 #include <iterator>
+#include <limits>
 #include <memory_resource>
+#include <optional>
 #include <type_traits>
+#include <utility>
 
 namespace tpl {
 
     namespace internal {
-        template <typename T, std::size_t BlockSize>
-        struct ListNode {
-            std::array<T, BlockSize> data;
-            alignas(atomic::internal::hardware_destructive_interference_size) std::atomic<ListNode*> next{nullptr};
-            std::atomic<std::size_t> size{0};
-        };
 
     } // namespace internal
 
@@ -33,7 +33,12 @@ namespace tpl {
         static constexpr auto block_size = BlockSize;
 
     private:
-        using node_t = internal::ListNode<T, block_size>;
+        struct ListNode {
+            std::array<T, BlockSize> data;
+            alignas(atomic::internal::hardware_destructive_interference_size) std::atomic<ListNode*> next{nullptr};
+            std::atomic<std::size_t> size{0};
+        };
+        using node_t = ListNode;
     public:
         template <bool IsConst>
         struct Iterator {
@@ -296,7 +301,8 @@ namespace tpl {
         std::pmr::polymorphic_allocator<std::byte> m_alloc;
     };
 
-    template <typename T, std::size_t BlockSize = 128>
+    template <typename T, std::size_t BlockSize = sizeof(std::size_t) * 8>
+        requires (BlockSize <= sizeof(std::size_t) * 8)
     struct HeadonlyBlockSizedList {
         using value_type = T;
         using size_type = std::size_t;
@@ -306,8 +312,66 @@ namespace tpl {
         static constexpr auto block_size = BlockSize;
 
     private:
-        using node_t = internal::ListNode<T, block_size>;
+        struct Node {
+            std::array<T, BlockSize> data;
+            alignas(atomic::internal::hardware_destructive_interference_size) std::atomic<Node*> next{nullptr};
+            std::atomic<std::size_t> in_use{};
+        };
+        static constexpr auto full = std::numeric_limits<std::size_t>::max() >> (sizeof(std::size_t) * 8 - block_size);
+
     public:
+        struct Index {
+            constexpr Index() noexcept = default;
+            constexpr Index(Index const&) noexcept = default;
+            constexpr Index(Index &&) noexcept = default;
+            constexpr Index& operator=(Index const&) noexcept = default;
+            constexpr Index& operator=(Index &&) noexcept = default;
+            constexpr ~Index() noexcept = default;
+
+            constexpr Index(Node* n, std::size_t pos) noexcept
+                : m_node(n)
+                , m_pos(pos)
+            {}
+
+            constexpr auto empty() const noexcept -> bool { return m_node == nullptr; }
+            constexpr auto operator==(Index const&) const noexcept -> bool = default;
+
+            constexpr operator bool() const noexcept { return !empty(); }
+
+            auto take() noexcept(std::is_nothrow_move_assignable_v<value_type>) -> std::optional<value_type> {
+                Node* root = std::exchange(m_node, nullptr);
+                if (root == nullptr) return {};
+                auto mask = std::size_t{1} << m_pos;
+
+                while (true) {
+                    auto bits = root->in_use.load(std::memory_order_acquire);
+                    if (root->in_use.compare_exchange_weak(
+                        bits,
+                        bits & ~mask,
+                        std::memory_order_release,
+                        std::memory_order_relaxed
+                    )) { break; }
+                }
+
+                return std::move(root->data[m_pos]);
+            }
+
+            auto value() noexcept(std::is_nothrow_copy_assignable_v<value_type>) -> std::optional<value_type> {
+                Node* root = m_node;
+                if (root == nullptr) return {};
+                return root->data[m_pos];
+            }
+
+            auto as_ptr() noexcept(std::is_nothrow_copy_assignable_v<value_type>) -> value_type* {
+                Node* root = m_node;
+                if (root == nullptr) return nullptr;
+                return root->data.data() + m_pos;
+            }
+        private:
+            Node* m_node{nullptr};
+            std::size_t m_pos{};
+        };
+
         HeadonlyBlockSizedList() noexcept = default;
         HeadonlyBlockSizedList(std::pmr::polymorphic_allocator<std::byte> alloc) noexcept
             : m_alloc(std::move(alloc))
@@ -317,22 +381,23 @@ namespace tpl {
         HeadonlyBlockSizedList& operator=(HeadonlyBlockSizedList const&) = delete;
         HeadonlyBlockSizedList& operator=(HeadonlyBlockSizedList &&) noexcept = delete;
         ~HeadonlyBlockSizedList() {
-            node_t* root = m_head.load(std::memory_order_relaxed);
+            Node* root = m_head.load(std::memory_order_relaxed);
             destroy(root);
         }
 
-        auto push(value_type val) noexcept(std::is_nothrow_move_assignable_v<value_type>) -> void {
-            node_t* node = m_alloc.new_object<node_t>();
+        auto push(value_type val) noexcept(std::is_nothrow_move_assignable_v<value_type>) -> Index {
+            Node* node = m_alloc.new_object<Node>();
             node->data[0] = std::move(val);
-            node->size = 1;
+            node->in_use = 1;
 
             // node->prev_head->.....
             while (true) {
-                node_t* head = m_head.load(std::memory_order_acquire);
+                Node* head = m_head.load(std::memory_order_acquire);
                 if (head) {
-                    if (try_push_element(head, node->data[0])) {
+                    auto res = try_push_element(head, node->data[0]);
+                    if (res) {
                         m_alloc.delete_object(node);
-                        break;
+                        return res;
                     }
                 }
 
@@ -344,31 +409,67 @@ namespace tpl {
                     std::memory_order_release,
                     std::memory_order_relaxed
                 )) {
-                    break;
+                    return { node, 0 };
                 }
             }
+        }
+
+        auto insert_or_push(value_type val) noexcept(std::is_nothrow_move_assignable_v<value_type>) -> Index {
+            auto root = m_head.load(std::memory_order_relaxed);
+            while (root) {
+                auto res = try_push_element(root, val);
+                if (res) return res;
+                root = root->next.load(std::memory_order_relaxed);
+            }
+            return push(std::move(val));
         }
 
         auto consume(auto&& fn) noexcept(std::is_nothrow_move_assignable_v<value_type>) -> void {
-            node_t* head = m_head.exchange(nullptr);
+            Node* head = m_head.exchange(nullptr, std::memory_order_acquire);
             auto root = head;
             while (root) {
-                auto sz = root->size.load(std::memory_order_relaxed);
-                if (sz == 0) {
-                    auto next = root->next.load(std::memory_order_relaxed);
-                    root = next;
-                    continue;
+                auto bits = root->in_use.load(std::memory_order_relaxed) & full;
+                while (bits) {
+                    auto set_bit = bits & -bits;
+                    auto pos = static_cast<std::size_t>(std::countr_zero(set_bit));
+                    fn(std::move(root->data[pos]));
+                    bits ^= set_bit;
                 }
-
-                for (auto i = 0ul; i < sz; ++i) {
-                    fn(std::move(root->data[i]));
-                }
-                root->size = 0;
+                root = root->next.load(std::memory_order_relaxed);
             }
             destroy(head);
         }
+
+        auto index_of(value_type v) const noexcept(std::equality_comparable<value_type>) -> Index {
+            Node* root = m_head.load(std::memory_order_acquire);
+            while (root) {
+                auto bits = root->in_use.load(std::memory_order_relaxed) & full;
+                while (bits) {
+                    auto set_bit = bits & -bits;
+                    auto pos = static_cast<std::size_t>(std::countr_zero(set_bit));
+                    auto& val = root->data[pos];
+                    if (val == v) return {
+                        root,
+                        pos
+                    };
+                    bits ^= set_bit;
+                }
+                root = root->next.load(std::memory_order_relaxed);
+            }
+            return {};
+        }
+
+        constexpr auto size() const noexcept -> std::size_t {
+            Node* root = m_head.load(std::memory_order_relaxed);
+            std::size_t count{};
+            while (root) {
+                count += static_cast<std::size_t>(std::popcount(root->in_use.load(std::memory_order_relaxed)));
+                root = root->next.load(std::memory_order_relaxed);
+            }
+            return count;
+        }
     private:
-        void destroy(node_t* root) {
+        void destroy(Node* root) {
             while (root) {
                 auto next = root->next.exchange(nullptr, std::memory_order_relaxed);
                 m_alloc.delete_object(root);
@@ -376,17 +477,27 @@ namespace tpl {
             }
         }
 
-        constexpr auto try_push_element(node_t* node, reference val) noexcept(std::is_nothrow_move_assignable_v<value_type>) -> bool {
-            auto idx = node->size.fetch_add(1);
-            if (idx >= BlockSize) {
-                node->size.store(BlockSize, std::memory_order_relaxed);
-                return false;
+        constexpr auto try_push_element(Node* node, reference val) noexcept(std::is_nothrow_move_assignable_v<value_type>) -> Index {
+            while (true) {
+                auto bits = node->in_use.load(std::memory_order_acquire);
+                // All the bits are set
+                if (bits == full) return {};
+
+                auto empty = (~bits & (bits + 1)) & full; // 0b101 -> 0b010
+                auto pos = static_cast<std::size_t>(std::countr_zero(empty));
+                if (!node->in_use.compare_exchange_weak(
+                    bits,
+                    bits | empty
+                )) {
+                    continue;
+                }
+
+                node->data[pos] = std::move(val);
+                return { node, pos };
             }
-            node->data[idx] = std::move(val);
-            return true;
         }
     private:
-        std::atomic<node_t*> m_head{};
+        std::atomic<Node*> m_head{};
         std::pmr::polymorphic_allocator<std::byte> m_alloc;
     };
 } // namespace tpl
