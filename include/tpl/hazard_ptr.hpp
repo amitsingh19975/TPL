@@ -1,0 +1,220 @@
+#ifndef AMT_TPL_HAZARD_PTR_HPP
+#define AMT_TPL_HAZARD_PTR_HPP
+
+#include "tpl/list.hpp"
+#include <atomic>
+#include <concepts>
+#include <cstdint>
+#include <functional>
+#include <memory>
+#include <memory_resource>
+#include <utility>
+
+namespace tpl {
+    struct HazardPointer;
+
+    struct HazardPointerDomain {
+        HazardPointerDomain(std::size_t max_reclaimed_nodes = 1000) noexcept
+            : m_max_reclaimed_nodes(max_reclaimed_nodes)
+        {}
+        explicit HazardPointerDomain(
+            std::pmr::polymorphic_allocator<std::byte> poly_alloc,
+            std::size_t max_reclaimed_nodes = 1000
+        ) noexcept
+            : m_alloc(std::move(poly_alloc))
+            , m_max_reclaimed_nodes(max_reclaimed_nodes)
+        {}
+        HazardPointerDomain(HazardPointerDomain const&) = delete;
+        HazardPointerDomain& operator=(HazardPointerDomain const&) = delete;
+        ~HazardPointerDomain() {
+            m_is_done.store(true, std::memory_order_release);
+            cleanup();
+        }
+
+        template <typename T>
+        constexpr auto is_hazard(T const* ptr) const noexcept -> bool {
+            if (ptr == nullptr) return false;
+            auto index = m_resources.index_of(ptr);
+            return !index.empty();
+        }
+
+        auto cleanup() -> void {
+            m_reclaimed.consume([](ReclaimedWrapper&& w) {
+                // destructor should clean the object
+                (void)w;
+            });
+        }
+    private:
+        struct ReclaimedWrapper {
+            using deleter_t = std::function<void(void*)>;
+            void* value{};
+            deleter_t deleter{};
+
+            ReclaimedWrapper() noexcept = default;
+            ReclaimedWrapper(void* ptr, deleter_t fn) noexcept
+                : value(ptr)
+                , deleter(std::move(fn))
+            {}
+
+            ReclaimedWrapper(ReclaimedWrapper const&) = delete;
+            ReclaimedWrapper(ReclaimedWrapper && other) noexcept
+                : value(std::exchange(other.value, nullptr))
+                , deleter(std::move(other.deleter))
+            {}
+
+            ReclaimedWrapper& operator=(ReclaimedWrapper const&) = delete;
+            ReclaimedWrapper& operator=(ReclaimedWrapper && other) noexcept {
+                if (this == &other) [[unlikely]] return *this;
+                value = std::exchange(other.value, nullptr);
+                deleter = std::move(other.deleter);
+                return *this;
+            }
+
+            ~ReclaimedWrapper() {
+                if (deleter) {
+                    deleter(value);
+                }
+            }
+        };
+        using list_t = HeadonlyBlockSizedList<void const*>;
+        using reclaimed_list_t = HeadonlyBlockSizedList<ReclaimedWrapper>;
+
+        friend struct HazardPointer;
+
+        template <typename>
+        friend struct HazardPointerObjBase;
+
+        auto get_resource() -> list_t::Index {
+            return m_resources.insert_or_push(nullptr);
+        }
+
+        template <typename D>
+        auto release_resource(std::byte* ptr, D deleter) -> void {
+            if (m_is_done.load(std::memory_order_acquire)) {
+                [[maybe_unused]] auto tmp = ReclaimedWrapper(ptr, std::move(deleter));
+                return;
+            }
+
+            if (is_hazard(ptr)) {
+                return;
+            }
+
+            m_reclaimed.push(ReclaimedWrapper(ptr, std::move(deleter)));
+
+            if (m_reclaimed.size() >= m_max_reclaimed_nodes) cleanup();
+        }
+    private:
+        std::pmr::polymorphic_allocator<std::byte> m_alloc{};
+        list_t m_resources{m_alloc};
+        reclaimed_list_t m_reclaimed{m_alloc};
+        mutable std::atomic<std::size_t> m_current_id_gen{};
+        std::size_t m_max_reclaimed_nodes{1000};
+        std::atomic<bool> m_is_done{false};
+    };
+
+    static inline HazardPointerDomain& hazard_pointer_default_domain() {
+        static HazardPointerDomain domain(std::pmr::get_default_resource());
+        return domain;
+    }
+
+    template <typename T>
+    struct HazardPointerObjBase {
+        template <typename D = std::default_delete<T>>
+        void retire(
+            D d = D(),
+            HazardPointerDomain& domain = hazard_pointer_default_domain()
+        ) noexcept {
+            domain.release_resource(reinterpret_cast<std::byte*>(this), [d = std::move(d)](void* ptr) {
+                std::invoke(d, reinterpret_cast<T*>(ptr));
+            });
+        }
+        HazardPointerObjBase() = default;
+        HazardPointerObjBase(HazardPointerObjBase const&) = default;
+        HazardPointerObjBase(HazardPointerObjBase&&) = default;
+        HazardPointerObjBase& operator=(HazardPointerObjBase const&) = default;
+        HazardPointerObjBase& operator=(HazardPointerObjBase&&) = default;
+        ~HazardPointerObjBase() = default;
+    };
+
+    struct HazardPointer {
+        constexpr HazardPointer() noexcept
+            : HazardPointer(hazard_pointer_default_domain())
+        {}
+        constexpr HazardPointer(HazardPointerDomain& domain) noexcept
+            : m_domain(&domain)
+            , m_index(m_domain->get_resource())
+        {}
+        constexpr HazardPointer(HazardPointer&&) noexcept = default;
+        constexpr HazardPointer& operator=(HazardPointer&&) noexcept = default;
+        ~HazardPointer() noexcept {
+            reset_protection();
+        }
+
+        constexpr auto empty() const noexcept -> bool {
+            return m_index.empty();
+        }
+
+        template<typename T>
+            requires (std::derived_from<T, HazardPointerObjBase<T>>)
+        auto protect(std::atomic<T*> const& src) noexcept -> T* {
+            auto item = src.load(std::memory_order_acquire);
+            while(true) {
+                auto val = reinterpret_cast<T const**>(m_index.as_ptr());
+                assert(val != nullptr);
+                *val = item;
+                item = src.load(std::memory_order_acquire);
+                if (*val == item) {
+                    return item;
+                }
+            }
+        }
+
+        template<typename T>
+            requires (std::derived_from<T, HazardPointerObjBase<T>>)
+        auto try_protect(T*& ptr, std::atomic<T*> const& src) noexcept -> bool {
+            auto item = src.load(std::memory_order_acquire);
+            auto val = reinterpret_cast<T const**>(m_index.as_ptr());
+            assert(val != nullptr);
+            *val = item;
+            if (*val != src.load(std::memory_order_acquire)) {
+                *val = nullptr;
+                return false;
+            }
+            ptr = item;
+            return true;
+        }
+
+        template<typename T>
+            requires (std::derived_from<T, HazardPointerObjBase<T>>)
+        auto reset_protection(T const* ptr) noexcept -> void {
+            assert(!empty());
+            auto val = m_index.as_ptr();
+            assert(val != nullptr);
+            *val = ptr;
+        }
+
+        void reset_protection(nullptr_t = nullptr) noexcept {
+            if(empty()) return;
+            auto val = m_index.as_ptr();
+            *val = nullptr;
+        }
+
+        void swap(HazardPointer& other) noexcept {
+            std::swap(m_index, other.m_index);
+            std::swap(m_domain, other.m_domain);
+        }
+    private:
+        HazardPointerDomain* m_domain;
+        HazardPointerDomain::list_t::Index m_index{};
+    };
+
+    static inline HazardPointer make_hazard_pointer(HazardPointerDomain& domain) noexcept {
+        return HazardPointer(domain);
+    }
+
+    static inline HazardPointer make_hazard_pointer() noexcept {
+        return HazardPointer();
+    }
+} // namespace tpl
+
+#endif // AMT_TPL_HAZARD_PTR_HPP
