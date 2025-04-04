@@ -6,6 +6,7 @@
 #include <print>
 #include <utility>
 #include "basic.hpp"
+#include "maths.hpp"
 #include "atomic.hpp"
 #include "hazard_ptr.hpp"
 #include <new>
