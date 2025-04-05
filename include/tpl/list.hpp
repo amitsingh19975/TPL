@@ -513,13 +513,7 @@ namespace tpl {
 
                 auto empty = (~bits & (bits + 1)) & full; // 0b101 -> 0b010
                 auto pos = static_cast<std::size_t>(std::countr_zero(empty));
-                if (!node->in_use.compare_exchange_weak(
-                    bits,
-                    bits | empty
-                )) {
-                    continue;
-                }
-
+                if (node->in_use.fetch_or(bits | empty) != bits) continue;
                 node->data[pos] = std::move(val);
                 return { node, pos };
             }
