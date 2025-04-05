@@ -2,6 +2,7 @@
 #define AMT_TPL_QUEUE_HPP
 
 #include <atomic>
+#include <cstdint>
 #include <memory_resource>
 #include <print>
 #include <utility>
@@ -361,8 +362,7 @@ namespace tpl {
             bool is_node_inserted = false;
 
             while (true) {
-                auto holder = make_hazard_pointer(m_domain);
-                head = holder.protect(m_head);
+                head = m_head.load(std::memory_order_acquire);
 
                 if (head != nullptr) {
                     if (head->q.push_value(val)) {
