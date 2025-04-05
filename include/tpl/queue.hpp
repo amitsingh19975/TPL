@@ -360,7 +360,8 @@ namespace tpl {
                 Node* node{};
                 bool is_inserted{false};
 
-                auto holder = make_hazard_pointer();
+                /*auto node_holder = make_hazard_pointer(m_domain);*/
+                auto holder = make_hazard_pointer(m_domain);
                 while (true) {
                     head = holder.protect(m_head);
 
