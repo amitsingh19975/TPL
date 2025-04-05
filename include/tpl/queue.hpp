@@ -320,30 +320,26 @@ namespace tpl {
         }
 
         auto reset() noexcept {
+            set_queue_state(QUEUE_STATE_RESET);
+            assert (!is_set_queue_state(static_cast<QueueState>(QUEUE_STATE_PUSH | QUEUE_STATE_POP)));
             {
-                Node* tmp = m_tail.load(std::memory_order_relaxed);
+                m_head.exchange(nullptr);
+                Node* tmp = m_tail.exchange(nullptr);
                 while (tmp) {
                     tmp->q.clear();
                     auto next = tmp->next.load(std::memory_order_relaxed);
-                    tmp->retire([this](Node* node) {
-                        if (!node) return;
-                        m_alloc.delete_object(node);
-                    }, m_domain);
+                    retire_node(tmp);
                     tmp = next;
                 }
 
                 while (!m_free_nodes.empty()) {
                     tmp = m_free_nodes.pop().value_or(nullptr);
                     if (!tmp) break;
-                    tmp->retire([this](Node* node) {
-                        if (!node) return;
-                        m_alloc.delete_object(node);
-                    }, m_domain);
+                    retire_node(tmp);
                 }
             }
-            m_tail = nullptr;
-            m_head = nullptr;
-            m_domain.cleanup();
+            while (m_domain.cleanup());
+            clear_queue_state(QUEUE_STATE_RESET);
         }
 
         template <typename... Args>
@@ -357,121 +353,167 @@ namespace tpl {
         }
 
         TPL_ATOMIC_FUNC_ATTR auto push(node_inner_t::value_t val) -> bool {
-            Node* head{};
-            Node* node{};
-            bool is_node_inserted = false;
+            assert(!is_set_queue_state(QUEUE_STATE_RESET));
+            set_queue_state(QUEUE_STATE_PUSH);
+            auto res = [this, val] -> bool {
+                Node* head{};
+                Node* node{};
+                bool is_inserted{false};
 
-            while (true) {
-                head = m_head.load(std::memory_order_acquire);
+                auto holder = make_hazard_pointer();
+                while (true) {
+                    head = holder.protect(m_head);
 
-                if (head != nullptr) {
-                    if (head->q.push_value(val)) {
+                    if (head != nullptr) {
+                        if (is_inserted) break;
+                        if (head->q.push_value(val)) {
+                            break;
+                        }
+                    }
+
+                    if (!node) {
+                        node = m_free_nodes.pop().value_or(nullptr);
+                        if (!node) {
+                            node = m_alloc.new_object<Node>();
+                        } else {
+                            node->next = nullptr;
+                        }
+                        node->q.push_value(val);
+                        holder.reset_protection(node);
+                    }
+
+                    if (!node) return false;
+
+                    if (!m_head.compare_exchange_weak(
+                        head,
+                        node,
+                        std::memory_order_release,
+                        std::memory_order_relaxed
+                    )) {
+                        continue;
+                    }
+
+                    // (old head) -> node(new head)
+                    if (head) head->next.store(node, std::memory_order_relaxed);
+                    is_inserted = true;
+                }
+
+                if (!is_inserted) {
+                    push_back(node);
+                }
+
+                while (true) {
+                    Node* tail = m_tail.load(std::memory_order_acquire);
+                    if (tail != nullptr)  break;
+                    if (m_tail.compare_exchange_weak(
+                        tail,
+                        head,
+                        std::memory_order_release,
+                        std::memory_order_relaxed
+                    )) {
                         break;
                     }
                 }
 
-                if (!node) {
-                    node = m_free_nodes.pop().value_or(nullptr);
-                    if (!node) {
-                        node = m_alloc.new_object<Node>();
-                    } else {
-                        node->next = nullptr;
-                    }
-                }
-
-                if (!node) return false;
-
-                if (!m_head.compare_exchange_weak(
-                    head,
-                    node,
-                    std::memory_order_release,
-                    std::memory_order_relaxed
-                )) {
-                    continue;
-                }
-
-                // (old head) -> node(new head)
-                if (head) head->next.store(node, std::memory_order_relaxed);
-                is_node_inserted = true;
-            }
-
-            if (!is_node_inserted) {
-                push_back(node);
-            }
-
-            while (true) {
-                Node* tail = m_tail.load(std::memory_order_acquire);
-                if (tail != nullptr)  break;
-                if (m_tail.compare_exchange_weak(
-                    tail,
-                    head,
-                    std::memory_order_release,
-                    std::memory_order_relaxed
-                )) {
-                    break;
-                }
-            }
-
-            return true;
+                return true;
+            }();
+            clear_queue_state(QUEUE_STATE_PUSH);
+            return res;
         }
 
         auto pop() -> std::optional<T> {
-            while (true) {
-                auto holder = make_hazard_pointer(m_domain);
-                auto tail = holder.protect(m_tail);
-                if (!tail) return {};
+            assert(!is_set_queue_state(QUEUE_STATE_RESET));
+            set_queue_state(QUEUE_STATE_POP);
+            auto res = [this] -> std::optional<T> {
+                while (true) {
+                    auto holder = make_hazard_pointer(m_domain);
+                    auto tail = holder.protect(m_tail);
+                    if (!tail) return {};
 
-                auto tmp = tail->q.pop();
+                    auto tmp = tail->q.pop();
 
-                if (tmp) {
-                    auto node_value = *tmp;
-                    auto item = static_cast<typename internal::storage_value<sizeof(T)>::type>(node_value);
-                    return std::move(std::bit_cast<T>(item));
+                    if (tmp) {
+                        auto node_value = *tmp;
+                        auto item = static_cast<typename internal::storage_value<sizeof(T)>::type>(node_value);
+                        return std::bit_cast<T>(item);
+                    }
+
+                    Node* next = tail->next.load(std::memory_order_acquire);
+                    if (next == nullptr) {
+                        return {};
+                    }
+
+                    if (m_tail.compare_exchange_weak(
+                        tail,
+                        next,
+                        std::memory_order_acquire,
+                        std::memory_order_relaxed
+                    )) {
+
+                        // Keep the nodes around
+                        push_back(tail);
+                    }
+
                 }
-
-                Node* next = tail->next.load(std::memory_order_acquire);
-                if (next == nullptr) {
-                    return {};
-                }
-
-                if (m_tail.compare_exchange_weak(
-                    tail,
-                    next,
-                    std::memory_order_acquire,
-                    std::memory_order_relaxed
-                )) {
-
-                    // Keep the nodes around
-                    push_back(tail);
-                }
-
-            }
-            return {};
+                return {};
+            }();
+            clear_queue_state(QUEUE_STATE_POP);
+            return res;
         }
 
         constexpr auto full() const noexcept { return false; }
 
     private:
+        constexpr auto retire_node(Node* node) noexcept -> void {
+            node->retire([&alloc = m_alloc] (Node* n) {
+                assert(reinterpret_cast<std::uintptr_t>(n) > 0x0FFF);
+                alloc.delete_object(n);
+            }, m_domain);
+        }
         constexpr auto push_back(Node* node) noexcept -> void {
             if (!node) return;
 
             while (!m_free_nodes.emplace(node)) {
                 Node* tmp = m_free_nodes.pop().value_or(nullptr);
                 if (!tmp) continue;
-
-                node->retire([this] (Node* node) {
-                    if (!node) return;
-                    m_alloc.delete_object(node);
-                }, m_domain);
+                retire_node(tmp);
             }
         }
         using free_queue_t = BoundedQueue<Node*, BlockSize>;
+        enum QueueState: std::uint8_t {
+            QUEUE_STATE_PUSH    = 1,
+            QUEUE_STATE_POP     = 2,
+            QUEUE_STATE_RESET   = 4,
+        };
+
+        constexpr auto set_queue_state([[maybe_unused]] QueueState state) noexcept -> void {
+            #ifndef NDEBUG
+            m_queue_state.fetch_or(state);
+            #endif
+        }
+
+        constexpr auto clear_queue_state([[maybe_unused]] QueueState state) noexcept -> void {
+            #ifndef NDEBUG
+            m_queue_state.fetch_and(static_cast<std::uint8_t>(~state));
+            #endif
+        }
+
+        constexpr auto is_set_queue_state([[maybe_unused]] QueueState state) const noexcept -> bool {
+            #ifndef NDEBUG
+            return (m_queue_state.load(std::memory_order_relaxed) & state) == state;
+            #else
+            return false;
+            #endif
+        }
     private:
         std::atomic<Node*> m_head{};
         alignas(internal::hardware_destructive_interference_size) std::atomic<Node*> m_tail{};
-        mutable std::pmr::polymorphic_allocator<std::byte> m_alloc;
+        std::pmr::polymorphic_allocator<std::byte> m_alloc;
         HazardPointerDomain m_domain;
         free_queue_t m_free_nodes;
+        #ifndef NDEBUG
+        std::atomic<std::uint8_t> m_queue_state;
+        #endif
     };
 } // namespace tpl
 

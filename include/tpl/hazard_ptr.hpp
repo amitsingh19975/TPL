@@ -13,12 +13,13 @@ namespace tpl {
     struct HazardPointer;
 
     struct HazardPointerDomain {
-        HazardPointerDomain(std::size_t max_reclaimed_nodes = 1000) noexcept
+        static constexpr auto default_max_reclaimed_nodes = 1000;
+        HazardPointerDomain(std::size_t max_reclaimed_nodes = default_max_reclaimed_nodes) noexcept
             : m_max_reclaimed_nodes(max_reclaimed_nodes)
         {}
         explicit HazardPointerDomain(
             std::pmr::polymorphic_allocator<std::byte> poly_alloc,
-            std::size_t max_reclaimed_nodes = 1000
+            std::size_t max_reclaimed_nodes = default_max_reclaimed_nodes
         ) noexcept
             : m_alloc(std::move(poly_alloc))
             , m_max_reclaimed_nodes(max_reclaimed_nodes)
@@ -36,17 +37,16 @@ namespace tpl {
             return !index.empty();
         }
 
-        auto cleanup() -> void {
-            m_reclaimed.consume([](ReclaimedWrapper&& w) {
-                // destructor should clean the object
-                (void)w;
+        auto cleanup() -> bool {
+            return m_reclaimed.consume([](ReclaimedWrapper&& w) {
+                w.destory();
             });
         }
     private:
         struct ReclaimedWrapper {
             using deleter_t = std::function<void(void*)>;
-            void* value{};
-            deleter_t deleter{};
+            void* value{nullptr};
+            deleter_t deleter{nullptr};
 
             ReclaimedWrapper() noexcept = default;
             ReclaimedWrapper(void* ptr, deleter_t fn) noexcept
@@ -68,10 +68,12 @@ namespace tpl {
                 return *this;
             }
 
-            ~ReclaimedWrapper() {
-                if (deleter) {
-                    deleter(value);
+            auto destory() -> void {
+                auto del = std::exchange(deleter, nullptr);
+                if (del) {
+                    del(value);
                 }
+                value = nullptr;
             }
         };
         using list_t = HeadonlyBlockSizedList<void const*>;
@@ -93,15 +95,25 @@ namespace tpl {
             }
 
             m_reclaimed.push(ReclaimedWrapper(ptr, std::move(deleter)));
-
-            if (m_reclaimed.size() >= m_max_reclaimed_nodes) cleanup();
+            while (true) {
+                auto old = m_current_reclaimed_size.load(std::memory_order_relaxed);
+                if (m_current_reclaimed_size.compare_exchange_strong(
+                    old,
+                    old >= m_max_reclaimed_nodes ? 0 : old + 1
+                )) {
+                    cleanup();
+                    m_current_reclaimed_size.store(m_reclaimed.size());
+                    break;
+                }
+            }
         }
     private:
         std::pmr::polymorphic_allocator<std::byte> m_alloc{};
         list_t m_resources{m_alloc};
         reclaimed_list_t m_reclaimed{m_alloc};
         mutable std::atomic<std::size_t> m_current_id_gen{};
-        std::size_t m_max_reclaimed_nodes{1000};
+        std::atomic<std::size_t> m_current_reclaimed_size{};
+        std::size_t m_max_reclaimed_nodes{default_max_reclaimed_nodes};
     };
 
     static inline HazardPointerDomain& hazard_pointer_default_domain() {
@@ -117,6 +129,7 @@ namespace tpl {
             HazardPointerDomain& domain = hazard_pointer_default_domain()
         ) noexcept {
             domain.release_resource(reinterpret_cast<std::byte*>(this), [d = std::move(d)](void* ptr) {
+                if (!ptr) return;
                 std::invoke(d, reinterpret_cast<T*>(ptr));
             });
         }
@@ -180,17 +193,12 @@ namespace tpl {
             requires (std::derived_from<T, HazardPointerObjBase<T>>)
         auto reset_protection(T const* ptr) noexcept -> void {
             assert(!empty());
-            auto val = m_index.as_ptr();
-            assert(val != nullptr);
-            *val = ptr;
-            m_index.mark_delete();
+            m_index.mark_delete(ptr);
         }
 
         void reset_protection(nullptr_t = nullptr) noexcept {
-            if(empty()) return;
-            auto val = m_index.as_ptr();
-            *val = nullptr;
-            m_index.mark_delete();
+            assert(!empty());
+            m_index.mark_delete(nullptr);
         }
 
         void swap(HazardPointer& other) noexcept {
