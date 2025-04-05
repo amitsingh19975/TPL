@@ -340,17 +340,7 @@ namespace tpl {
                 Node* root = std::exchange(m_node, nullptr);
                 if (root == nullptr) return {};
                 auto mask = std::size_t{1} << m_pos;
-
-                while (true) {
-                    auto bits = root->in_use.load(std::memory_order_acquire);
-                    if (root->in_use.compare_exchange_weak(
-                        bits,
-                        bits & ~mask,
-                        std::memory_order_release,
-                        std::memory_order_relaxed
-                    )) { break; }
-                }
-
+                root->in_use.fetch_and(~mask);
                 return std::move(root->data[m_pos]);
             }
 
@@ -369,30 +359,14 @@ namespace tpl {
             auto mark_delete() noexcept -> void {
                 auto root = m_node;
                 auto const mask = std::size_t{1} << m_pos;
-                while (true) {
-                    auto bits = root->in_use.load(std::memory_order_acquire);
-                    if (root->in_use.compare_exchange_weak(
-                        bits,
-                        bits & ~mask,
-                        std::memory_order_release,
-                        std::memory_order_relaxed
-                    )) { break; }
-                }
+                root->in_use.fetch_and(~mask);
             }
 
             auto mark_delete(value_type v) noexcept -> void {
                 auto root = m_node;
                 auto const mask = std::size_t{1} << m_pos;
                 root->data[m_pos] = v;
-                while (true) {
-                    auto bits = root->in_use.load(std::memory_order_acquire);
-                    if (root->in_use.compare_exchange_weak(
-                        bits,
-                        bits & ~mask,
-                        std::memory_order_release,
-                        std::memory_order_relaxed
-                    )) { break; }
-                }
+                root->in_use.fetch_and(~mask);
             }
         private:
             Node* m_node{nullptr};
