@@ -8,8 +8,6 @@
 #include <cassert>
 #include <concepts>
 #include <cstddef>
-#include <cstdint>
-#include <functional>
 #include <iterator>
 #include <limits>
 #include <memory_resource>
@@ -453,8 +451,9 @@ namespace tpl {
             return push(std::move(val));
         }
 
-        auto consume(auto&& fn) noexcept(std::is_nothrow_move_assignable_v<value_type>) -> void {
+        auto consume(auto&& fn) noexcept(std::is_nothrow_move_assignable_v<value_type>) -> bool {
             Node* head = m_head.exchange(nullptr, std::memory_order_acquire);
+            if (!head) return false;
             auto root = head;
             while (root) {
                 auto bits = root->in_use.load(std::memory_order_relaxed) & full;
@@ -467,6 +466,7 @@ namespace tpl {
                 root = root->next.load(std::memory_order_relaxed);
             }
             destroy(head);
+            return true;
         }
 
         auto index_of(value_type v) const noexcept(std::equality_comparable<value_type>) -> Index {
@@ -476,8 +476,7 @@ namespace tpl {
                 while (bits) {
                     auto set_bit = bits & -bits;
                     auto pos = static_cast<std::size_t>(std::countr_zero(set_bit));
-                    auto& val = root->data[pos];
-                    if (val == v) return {
+                    if (root->data[pos] == v) return {
                         root,
                         pos
                     };
