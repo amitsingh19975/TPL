@@ -381,6 +381,9 @@ namespace tpl {
                         node = m_free_nodes.pop().value_or(nullptr);
                         if (!node) {
                             node = m_alloc.new_object<Node>();
+                        } else {
+                            node->q.reset();
+                            node->next = nullptr;
                         }
                         node->q.push_value(val);
                         node_holder.reset_protection(node);
@@ -477,8 +480,6 @@ namespace tpl {
         constexpr auto push_back(Node* node) noexcept -> void {
             if (!node) return;
 
-            node->q.reset();
-            node->next = nullptr;
             while (!m_free_nodes.emplace(node)) {
                 Node* tmp = m_free_nodes.pop().value_or(nullptr);
                 if (!tmp) continue;
