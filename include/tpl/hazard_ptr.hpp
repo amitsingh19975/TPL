@@ -26,7 +26,6 @@ namespace tpl {
         HazardPointerDomain(HazardPointerDomain const&) = delete;
         HazardPointerDomain& operator=(HazardPointerDomain const&) = delete;
         ~HazardPointerDomain() {
-            m_is_done.store(true, std::memory_order_release);
             cleanup();
         }
 
@@ -89,11 +88,6 @@ namespace tpl {
 
         template <typename D>
         auto release_resource(std::byte* ptr, D deleter) -> void {
-            if (m_is_done.load(std::memory_order_acquire)) {
-                [[maybe_unused]] auto tmp = ReclaimedWrapper(ptr, std::move(deleter));
-                return;
-            }
-
             if (is_hazard(ptr)) {
                 return;
             }
@@ -108,7 +102,6 @@ namespace tpl {
         reclaimed_list_t m_reclaimed{m_alloc};
         mutable std::atomic<std::size_t> m_current_id_gen{};
         std::size_t m_max_reclaimed_nodes{1000};
-        std::atomic<bool> m_is_done{false};
     };
 
     static inline HazardPointerDomain& hazard_pointer_default_domain() {
@@ -190,12 +183,14 @@ namespace tpl {
             auto val = m_index.as_ptr();
             assert(val != nullptr);
             *val = ptr;
+            m_index.mark_delete();
         }
 
         void reset_protection(nullptr_t = nullptr) noexcept {
             if(empty()) return;
             auto val = m_index.as_ptr();
             *val = nullptr;
+            m_index.mark_delete();
         }
 
         void swap(HazardPointer& other) noexcept {

@@ -367,6 +367,35 @@ namespace tpl {
                 if (root == nullptr) return nullptr;
                 return root->data.data() + m_pos;
             }
+
+            auto mark_delete() noexcept -> void {
+                auto root = m_node;
+                auto const mask = std::size_t{1} << m_pos;
+                while (true) {
+                    auto bits = root->in_use.load(std::memory_order_acquire);
+                    if (root->in_use.compare_exchange_weak(
+                        bits,
+                        bits & ~mask,
+                        std::memory_order_release,
+                        std::memory_order_relaxed
+                    )) { break; }
+                }
+            }
+
+            auto mark_delete(value_type v) noexcept -> void {
+                auto root = m_node;
+                auto const mask = std::size_t{1} << m_pos;
+                root->data[m_pos] = v;
+                while (true) {
+                    auto bits = root->in_use.load(std::memory_order_acquire);
+                    if (root->in_use.compare_exchange_weak(
+                        bits,
+                        bits & ~mask,
+                        std::memory_order_release,
+                        std::memory_order_relaxed
+                    )) { break; }
+                }
+            }
         private:
             Node* m_node{nullptr};
             std::size_t m_pos{};
