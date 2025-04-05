@@ -10,6 +10,7 @@
 #include "maths.hpp"
 #include "atomic.hpp"
 #include "hazard_ptr.hpp"
+#include "tpl/thread.hpp"
 #include <new>
 #include <type_traits>
 
@@ -151,11 +152,15 @@ namespace tpl {
                 return size() == N;
             }
 
-            constexpr auto clear() noexcept(std::is_nothrow_destructible_v<T>) -> void {
-                while (pop()) {};
+            constexpr auto reset() noexcept -> void {
                 for (auto i = 0u; i < m_data.size(); ++i) m_data[i].set_seq(index_t(i << 1));
                 m_read_index.store(0);
                 m_write_index.store(0);
+            }
+
+            constexpr auto clear() noexcept(std::is_nothrow_destructible_v<T>) -> void {
+                while (pop()) {};
+                reset();
             }
 
             TPL_ATOMIC_FUNC_ATTR auto pop() noexcept(std::is_nothrow_move_assignable_v<T>) -> std::optional<T> {
@@ -360,7 +365,7 @@ namespace tpl {
                 Node* node{};
                 bool is_inserted{false};
 
-                /*auto node_holder = make_hazard_pointer(m_domain);*/
+                auto node_holder = make_hazard_pointer(m_domain);
                 auto holder = make_hazard_pointer(m_domain);
                 while (true) {
                     head = holder.protect(m_head);
@@ -376,11 +381,9 @@ namespace tpl {
                         node = m_free_nodes.pop().value_or(nullptr);
                         if (!node) {
                             node = m_alloc.new_object<Node>();
-                        } else {
-                            node->next = nullptr;
                         }
                         node->q.push_value(val);
-                        holder.reset_protection(node);
+                        node_holder.reset_protection(node);
                     }
 
                     if (!node) return false;
@@ -399,7 +402,7 @@ namespace tpl {
                     is_inserted = true;
                 }
 
-                if (!is_inserted) {
+                if (!is_inserted && node) {
                     push_back(node);
                 }
 
@@ -474,6 +477,8 @@ namespace tpl {
         constexpr auto push_back(Node* node) noexcept -> void {
             if (!node) return;
 
+            node->q.reset();
+            node->next = nullptr;
             while (!m_free_nodes.emplace(node)) {
                 Node* tmp = m_free_nodes.pop().value_or(nullptr);
                 if (!tmp) continue;
