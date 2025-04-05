@@ -2,6 +2,7 @@
 
 #include <array>
 #include <chrono>
+#include <cstdint>
 #include <cstdlib>
 #include <print>
 #include <thread>
@@ -93,7 +94,8 @@ TEST_CASE("Thread Safe Queue", "[queue]" ) {
 
         auto fn = [&q, &finshed](std::size_t id, int size) {
             for (auto i = 0; i < size; ++i) {
-                q.push(new type(id, i));
+                auto item = new type(id, i);
+                q.push(item);
                 std::this_thread::sleep_for(std::chrono::milliseconds(rand() % 10));
             }
             finshed.fetch_add(1);
@@ -115,8 +117,9 @@ TEST_CASE("Thread Safe Queue", "[queue]" ) {
             while (!q.empty()) {
                 auto tmp = q.pop();
                 if (!tmp) break;
-                auto [id, i] = *tmp.value();
-                delete *tmp;
+                type* item = tmp.value();
+                auto [id, i] = *item;
+                delete item;
                 flags[id][i] = true;
                 ++count;
             }
