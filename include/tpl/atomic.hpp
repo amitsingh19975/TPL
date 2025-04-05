@@ -32,6 +32,11 @@
 #define TPL_ATOMIC_FUNC_ATTR [[using gnu: hot, flatten]]
 #endif
 
+#ifndef NDEBUG
+#undef TPL_ATOMIC_FUNC_ATTR
+#define TPL_ATOMIC_FUNC_ATTR
+#endif
+
 namespace tpl::atomic {
     namespace internal {
 #ifdef __cpp_lib_hardware_interference_size
