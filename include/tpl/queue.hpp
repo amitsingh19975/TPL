@@ -476,7 +476,7 @@ namespace tpl {
                 retire_node(tmp);
             }
         }
-        using free_queue_t = BoundedQueue<Node*, 8>;
+        using free_queue_t = BoundedQueue<Node*, BlockSize>;
         enum QueueState: std::uint8_t {
             QUEUE_STATE_PUSH    = 1,
             QUEUE_STATE_POP     = 2,

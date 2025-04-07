@@ -4,7 +4,6 @@
 #include "list.hpp"
 #include <atomic>
 #include <concepts>
-#include <cstdint>
 #include <functional>
 #include <memory>
 #include <memory_resource>
@@ -14,7 +13,7 @@ namespace tpl {
     struct HazardPointer;
 
     struct HazardPointerDomain {
-        static constexpr auto default_max_reclaimed_nodes = 1;
+        static constexpr auto default_max_reclaimed_nodes = 1000;
         HazardPointerDomain(std::size_t max_reclaimed_nodes = default_max_reclaimed_nodes) noexcept
             : m_max_reclaimed_nodes(max_reclaimed_nodes)
         {}
