@@ -503,7 +503,7 @@ namespace tpl {
             #endif
         }
     private:
-        std::atomic<Node*> m_head{};
+        alignas(internal::hardware_destructive_interference_size) std::atomic<Node*> m_head{};
         alignas(internal::hardware_destructive_interference_size) std::atomic<Node*> m_tail{};
         std::pmr::polymorphic_allocator<std::byte> m_alloc;
         HazardPointerDomain m_domain;
