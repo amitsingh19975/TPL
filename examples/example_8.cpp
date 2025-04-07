@@ -1,9 +1,12 @@
+#ifdef NDEBUG
+    #undef NDEBUG
+#endif
+
 #include <cstdlib>
 #include <ctime>
 #include <print>
 
 #include "tpl.hpp"
-#include "tpl/hazard_ptr.hpp"
 
 using namespace tpl;
 
@@ -41,9 +44,9 @@ int main() {
         h.reset_protection();
         assert(hazard_pointer_default_domain().is_hazard(p));
         h1.reset_protection();
-        assert(hazard_pointer_default_domain().is_hazard(p));
+        assert(hazard_pointer_default_domain().is_hazard(p1));
         h2.reset_protection();
-        assert(!hazard_pointer_default_domain().is_hazard(p));
+        assert(!hazard_pointer_default_domain().is_hazard(p2));
     }
 
     {
