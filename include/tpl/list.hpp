@@ -11,6 +11,7 @@
 #include <iterator>
 #include <limits>
 #include <memory_resource>
+#include <mutex>
 #include <optional>
 #include <type_traits>
 #include <utility>
@@ -340,8 +341,9 @@ namespace tpl {
                 Node* root = std::exchange(m_node, nullptr);
                 if (root == nullptr) return {};
                 auto mask = std::size_t{1} << m_pos;
+                auto val = std::move(root->data[m_pos]);
                 root->in_use.fetch_and(~mask);
-                return std::move(root->data[m_pos]);
+                return val;
             }
 
             auto value() noexcept(std::is_nothrow_copy_assignable_v<value_type>) -> std::optional<value_type> {
@@ -358,14 +360,16 @@ namespace tpl {
 
             auto mark_delete() noexcept -> void {
                 auto root = m_node;
+                m_node = nullptr;
                 auto const mask = std::size_t{1} << m_pos;
                 root->in_use.fetch_and(~mask);
             }
 
-            auto mark_delete(value_type v) noexcept -> void {
+            auto mark_delete(value_type v) noexcept(std::is_nothrow_move_assignable_v<value_type>) -> void {
                 auto root = m_node;
+                m_node = nullptr;
                 auto const mask = std::size_t{1} << m_pos;
-                root->data[m_pos] = v;
+                root->data[m_pos] = std::move(v);
                 root->in_use.fetch_and(~mask);
             }
         private:
@@ -425,7 +429,9 @@ namespace tpl {
             return push(std::move(val));
         }
 
-        auto consume(auto&& fn) noexcept(std::is_nothrow_move_assignable_v<value_type>) -> bool {
+        template <typename Fn> 
+            requires (std::invocable<Fn, value_type>)
+        auto consume(Fn&& fn) noexcept(std::is_nothrow_move_assignable_v<value_type>) -> bool {
             Node* head = m_head.exchange(nullptr, std::memory_order_acquire);
             if (!head) return false;
             auto root = head;
@@ -446,7 +452,7 @@ namespace tpl {
         auto index_of(value_type v) const noexcept(std::equality_comparable<value_type>) -> Index {
             Node* root = m_head.load(std::memory_order_acquire);
             while (root) {
-                auto bits = root->in_use.load(std::memory_order_relaxed) & full;
+                auto bits = root->in_use.load(std::memory_order_acquire) & full;
                 while (bits) {
                     auto set_bit = bits & -bits;
                     auto pos = static_cast<std::size_t>(std::countr_zero(set_bit));
@@ -456,7 +462,7 @@ namespace tpl {
                     };
                     bits ^= set_bit;
                 }
-                root = root->next.load(std::memory_order_relaxed);
+                root = root->next.load(std::memory_order_acquire);
             }
             return {};
         }
@@ -486,8 +492,10 @@ namespace tpl {
                 if (bits == full) return {};
 
                 auto empty = (~bits & (bits + 1)) & full; // 0b101 -> 0b010
+                if ((node->in_use.fetch_or(empty) & empty) != 0) {
+                    continue;
+                }
                 auto pos = static_cast<std::size_t>(std::countr_zero(empty));
-                if (node->in_use.fetch_or(bits | empty) != bits) continue;
                 node->data[pos] = std::move(val);
                 return { node, pos };
             }

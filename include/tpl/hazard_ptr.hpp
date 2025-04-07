@@ -4,6 +4,7 @@
 #include "list.hpp"
 #include <atomic>
 #include <concepts>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <memory_resource>
@@ -13,7 +14,7 @@ namespace tpl {
     struct HazardPointer;
 
     struct HazardPointerDomain {
-        static constexpr auto default_max_reclaimed_nodes = 1000;
+        static constexpr auto default_max_reclaimed_nodes = 1;
         HazardPointerDomain(std::size_t max_reclaimed_nodes = default_max_reclaimed_nodes) noexcept
             : m_max_reclaimed_nodes(max_reclaimed_nodes)
         {}
@@ -70,9 +71,7 @@ namespace tpl {
 
             auto destory() -> void {
                 auto del = std::exchange(deleter, nullptr);
-                if (del) {
-                    del(value);
-                }
+                if (del) del(value);
                 value = nullptr;
             }
         };
@@ -89,7 +88,7 @@ namespace tpl {
         }
 
         template <typename D>
-        auto release_resource(std::byte* ptr, D deleter) -> void {
+        auto release_resource(void* ptr, D deleter) -> void {
             if (is_hazard(ptr)) {
                 return;
             }
@@ -128,7 +127,7 @@ namespace tpl {
             D d = D(),
             HazardPointerDomain& domain = hazard_pointer_default_domain()
         ) noexcept {
-            domain.release_resource(reinterpret_cast<std::byte*>(this), [d = std::move(d)](void* ptr) {
+            domain.release_resource(reinterpret_cast<std::byte*>(this), [d = std::move(d)](void* ptr) mutable {
                 if (!ptr) return;
                 std::invoke(d, reinterpret_cast<T*>(ptr));
             });
@@ -152,7 +151,7 @@ namespace tpl {
         constexpr HazardPointer(HazardPointer&&) noexcept = default;
         constexpr HazardPointer& operator=(HazardPointer&&) noexcept = default;
         ~HazardPointer() noexcept {
-            reset_protection();
+            delete_obj();
         }
 
         constexpr auto empty() const noexcept -> bool {
@@ -193,17 +192,25 @@ namespace tpl {
             requires (std::derived_from<T, HazardPointerObjBase<T>>)
         auto reset_protection(T const* ptr) noexcept -> void {
             assert(!empty());
-            m_index.mark_delete(ptr);
+            auto val = m_index.as_ptr();
+            *val = ptr;
         }
 
         void reset_protection(nullptr_t = nullptr) noexcept {
             assert(!empty());
-            m_index.mark_delete(nullptr);
+            auto val = m_index.as_ptr();
+            *val = nullptr;
         }
 
         void swap(HazardPointer& other) noexcept {
             std::swap(m_index, other.m_index);
             std::swap(m_domain, other.m_domain);
+        }
+
+    private:
+        void delete_obj() noexcept {
+            if (empty()) return;
+            m_index.mark_delete();
         }
     private:
         HazardPointerDomain* m_domain;

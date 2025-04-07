@@ -10,7 +10,6 @@
 #include "maths.hpp"
 #include "atomic.hpp"
 #include "hazard_ptr.hpp"
-#include "tpl/thread.hpp"
 #include <new>
 #include <type_traits>
 
@@ -361,14 +360,13 @@ namespace tpl {
             assert(!is_set_queue_state(QUEUE_STATE_RESET));
             set_queue_state(QUEUE_STATE_PUSH);
             auto res = [this, val] -> bool {
-                Node* head{};
                 Node* node{};
                 bool is_inserted{false};
 
                 auto node_holder = make_hazard_pointer(m_domain);
-                auto holder = make_hazard_pointer(m_domain);
                 while (true) {
-                    head = holder.protect(m_head);
+                    auto holder = make_hazard_pointer(m_domain);
+                    auto head = holder.protect(m_head);
 
                     if (head != nullptr) {
                         if (is_inserted) break;
@@ -399,29 +397,21 @@ namespace tpl {
                     )) {
                         continue;
                     }
+                    is_inserted = true;
 
                     // (old head) -> node(new head)
-                    if (head) head->next.store(node, std::memory_order_relaxed);
-                    is_inserted = true;
-                }
-
-                if (!is_inserted && node) {
-                    push_back(node);
-                }
-
-                while (true) {
-                    Node* tail = m_tail.load(std::memory_order_acquire);
-                    if (tail != nullptr)  break;
-                    if (m_tail.compare_exchange_weak(
-                        tail,
-                        head,
-                        std::memory_order_release,
-                        std::memory_order_relaxed
-                    )) {
-                        break;
+                    if (head) {
+                        head->next.store(node, std::memory_order_relaxed);
+                    } else {
+                        m_tail.store(node);
+                        return true;
                     }
                 }
 
+                node_holder.~HazardPointer();
+                if (!is_inserted) {
+                    push_back(node);
+                }
                 return true;
             }();
             clear_queue_state(QUEUE_STATE_PUSH);
@@ -456,7 +446,7 @@ namespace tpl {
                         std::memory_order_acquire,
                         std::memory_order_relaxed
                     )) {
-
+                        holder.~HazardPointer();
                         // Keep the nodes around
                         push_back(tail);
                     }
@@ -472,7 +462,7 @@ namespace tpl {
 
     private:
         constexpr auto retire_node(Node* node) noexcept -> void {
-            node->retire([&alloc = m_alloc] (Node* n) {
+            node->retire([alloc = m_alloc] (Node* n) mutable {
                 assert(reinterpret_cast<std::uintptr_t>(n) > 0x0FFF);
                 alloc.delete_object(n);
             }, m_domain);
@@ -486,7 +476,7 @@ namespace tpl {
                 retire_node(tmp);
             }
         }
-        using free_queue_t = BoundedQueue<Node*, BlockSize>;
+        using free_queue_t = BoundedQueue<Node*, 8>;
         enum QueueState: std::uint8_t {
             QUEUE_STATE_PUSH    = 1,
             QUEUE_STATE_POP     = 2,
