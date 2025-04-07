@@ -15,11 +15,6 @@ struct Node: HazardPointerObjBase<Node> {
 };
 
 int main() {
-    /*auto list = HeadonlyBlockSizedList<int, 4>{};*/
-    /*for (auto i = 1; i < 11; ++i) list.push(i);*/
-    /*list.consume([](auto item) {*/
-    /*    std::println("Item: {}", item);*/
-    /*});*/
     auto tmp = new Node{ .a = 4 };
     std::atomic<Node*> node{ tmp };
     {
